@@ -5,6 +5,8 @@ import qs.Commons
 import "IdentifyModel.js" as IdentifyModel
 
 // Visual-only cue. Never changes the layout, focuses a window, or grabs input.
+// Owned by the requesting panel: closing or rebuilding it cancels the cue.
+// Unlike a preview decision, an obsolete identification must not be restored.
 Item {
   id: root
 

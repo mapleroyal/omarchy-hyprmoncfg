@@ -68,6 +68,9 @@ Panel {
   property bool editorRefreshQueued: false
   property bool editorResetQueued: false
   property int monitorTopologyRevision: 0
+  // A cue belongs to the observed display snapshot, even if Qt retains the
+  // same screen object while the daemon reports a remap or replacement.
+  onMonitorTopologyRevisionChanged: displayIdentify.clear()
   property bool reusePending: false
   property int reuseGeneration: 0
   property bool reuseTopologyChanged: false

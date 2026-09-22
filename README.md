@@ -89,7 +89,7 @@ Neutral SDR multipliers are shown as 1, including profiles that omit them. Reset
 
 ## Identify screens and reuse a layout
 
-Click a monitor in the compact or expanded layout to outline that physical screen for two seconds. The label helps distinguish identical monitors without moving windows or changing the layout. The cue does not take keyboard or mouse input, and dragging a monitor does not trigger it. Unavailable screens show an explanation instead.
+Click a monitor in the compact or expanded layout to outline that physical screen for up to two seconds. The label helps distinguish identical monitors without moving windows or changing the layout. The cue does not take keyboard or mouse input, and dragging a monitor does not trigger it. Closing or rebuilding the panel, starting a preview, or detecting a changed display setup cancels the cue. Identify the screen again after the display list refreshes. Unavailable screens show an explanation instead.
 
 Choose **Use an existing layout…**, or **4 Reuse layout** in the expanded editor, to adapt a saved layout to the monitors currently connected. Similar monitor models appear first, and any saved layout can be used. Assign each saved role to a current screen; **Identify** beside each assignment helps check which screen is which. Choosing an already assigned screen swaps the two roles. You can leave out an absent saved display.
 

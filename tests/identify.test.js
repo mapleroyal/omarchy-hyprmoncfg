@@ -105,6 +105,58 @@ test("unplug/replacement and failed identification remove the old cue without ch
   assert.match(cue.root.lastError, /not connected/)
 })
 
+test("topology and hardware changes cancel an active cue even while its Qt screen survives", () => {
+  const qml = fs.readFileSync(path.join(__dirname, "..", "Panel.qml"), "utf8")
+  const source = qml.match(/^  function updateDocument\([\s\S]*?^  }/m)[0]
+  const changed = (qml.match(/onMonitorTopologyRevisionChanged: ([^\n]+)/) || [])[1] || ""
+  for (const replacement of [
+    { monitors: [{ name: "DP-4", enabled: true }], monitor_set_hash: "original" },
+    { monitors: [{ name: "DP-3", enabled: true }], monitor_set_hash: "replacement" }
+  ]) {
+    const f = fixture()
+    const cue = overlay()
+    cue.root.availableScreens = [f.screen]
+    const root = {
+      document: { monitors: [{ name: "DP-3", enabled: true }], monitor_set_hash: "original" },
+      syncDaemonPreview() {}, queueEditorRefresh() {}
+    }
+    const context = vm.createContext({ root, displayIdentify: cue.root, Model: require("../Model.js") })
+    let revision = 0
+    Object.defineProperty(root, "monitorTopologyRevision", {
+      get() { return revision },
+      set(value) { revision = value; vm.runInContext(changed, context) }
+    })
+    Object.defineProperty(root, "monitorSummaries", { get() { return root.document.monitors } })
+    const updateDocument = vm.runInContext("(" + source + ")", context)
+    cue.root.identify(f.output, f.profile, f.displays)
+    updateDocument({ monitors: [{ name: "DP-3", enabled: true, focused: true }], monitor_set_hash: "original" })
+    assert.equal(cue.root.active, true, "focus-only status updates must retain the cue")
+    updateDocument(replacement)
+    assert.equal(cue.root.availableScreens[0], f.screen)
+    assert.equal(cue.root.active, false, "a changed snapshot must cancel the cue without waiting for Qt")
+    assert.equal(cue.root.targetScreen, null)
+    assert.equal(cue.expiry.running, false)
+    updateDocument(replacement)
+    assert.equal(cue.root.active, false, "a later status update must not restore an old request")
+  }
+})
+
+test("closing the panel cancels active identification and its expiry timer", () => {
+  const qml = fs.readFileSync(path.join(__dirname, "..", "Panel.qml"), "utf8")
+  const close = qml.match(/^  function close\([\s\S]*?^  }/m)[0]
+  const f = fixture()
+  const cue = overlay()
+  cue.root.availableScreens = [f.screen]
+  let hidden = false
+  const root = { reuseGeneration: 0, previewTransaction: "", controller: { hide() { hidden = true } } }
+  cue.root.identify(f.output, f.profile, f.displays)
+  vm.runInNewContext("(" + close + ")", { root, displayIdentify: cue.root })()
+  assert.equal(hidden, true)
+  assert.equal(cue.root.active, false)
+  assert.equal(cue.root.targetScreen, null)
+  assert.equal(cue.expiry.running, false)
+})
+
 test("identification windows have no keyboard focus, pointer region, or layout commands", () => {
   const qml = fs.readFileSync(path.join(__dirname, "..", "DisplayIdentify.qml"), "utf8")
   assert.match(qml, /WlrLayershell\.keyboardFocus: WlrKeyboardFocus\.None/)
