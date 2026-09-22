@@ -1561,19 +1561,42 @@ test("reuse rejects observed A to B to A topology changes even when hashes and s
   assert.equal(panel.root.editorRefreshQueued, true)
 })
 
-test("a timed-out reuse request requires an editor refresh after status recovers", () => {
+test("reuse identification waits for pending requests and complete timeout recovery", () => {
+  const qml = fs.readFileSync(path.join(__dirname, "..", "Panel.qml"), "utf8")
+  const paneQml = fs.readFileSync(path.join(__dirname, "..", "LayoutReusePane.qml"), "utf8")
+  const busy = qml.slice(qml.indexOf("id: reusePane"))
+    .match(/busy: ([\s\S]*?)\n            statusMessage:/)[1]
+  const enabled = paneQml.slice(paneQml.indexOf("id: identifyButton"))
+    .match(/enabled: ([^\n]+)/)[1]
   const panel = editorRefreshPanel()
+  const pane = { mapping: { laptop: "laptop" } }
+  Object.defineProperty(pane, "busy", {
+    get: vm.runInNewContext("(function() { return " + busy + " })", { root: panel.root })
+  })
+  const identifyEnabled = vm.runInNewContext("(function() { return " + enabled + " })", {
+    root: pane, parent: { parent: { modelData: { key: "laptop" } } }
+  })
   panel.root.openLayoutReuse()
+  assert.equal(identifyEnabled(), true)
   panel.root.reuseLayout("Current", { laptop: "laptop" })
+  assert.equal(identifyEnabled(), false, "an in-flight reuse must disable identification")
   panel.fail(panel.packets[0].id)
   assert.equal(panel.root.editorRetry, true)
   assert.equal(panel.root.reuseTopologyChanged, true)
+  assert.equal(identifyEnabled(), false, "a failed query leaves the assignment stale")
   panel.root.retryConnectingDisplays()
+  assert.equal(identifyEnabled(), false, "status recovery is still in flight")
   panel.receive(panel.packets[1].id, { monitors: panel.root.monitorSummaries })
+  assert.equal(identifyEnabled(), false, "status alone cannot refresh the editor assignment")
   panel.root.reuseLayout("Current", { laptop: "laptop" })
   assert.equal(panel.packets.length, 2)
   panel.tick()
   assert.equal(panel.packets[2].method, "editor_state")
+  assert.equal(identifyEnabled(), false, "editor recovery is still in flight")
+  panel.receive(panel.packets[2].id)
+  assert.equal(identifyEnabled(), true, "a current assignment can be identified again")
+  pane.mapping = { laptop: "" }
+  assert.equal(identifyEnabled(), false, "an omitted saved display cannot be identified")
 })
 
 test("reused generated workspaces materialize assignments when changed to manual", () => {

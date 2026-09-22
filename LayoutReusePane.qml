@@ -177,7 +177,7 @@ Item {
                   focusable: true
                   text: "Identify"
                   bordered: true
-                  enabled: !!root.mapping[parent.parent.modelData.key]
+                  enabled: !root.busy && !!root.mapping[parent.parent.modelData.key]
                   foreground: root.foreground
                   fontFamily: root.fontFamily
                   onClicked: root.identifyRequested(root.mapping[parent.parent.modelData.key])
