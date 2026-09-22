@@ -45,6 +45,7 @@ Item {
           { keys: "↑  ↓", action: "Browse profiles and their saved setup" },
           { keys: "Enter, a", action: "Apply it in manual profile mode" },
           { keys: "l", action: "Load it into the layout editor" },
+          { keys: "u", action: "Reuse its layout on these displays" },
           { keys: "e", action: "Edit its exec command" },
           { keys: "d", action: "Delete it" },
           { keys: "Space", action: "Toggle automatic profile selection" }
@@ -58,7 +59,7 @@ Item {
           { keys: "Enter, Space", action: "Open a selector or activate a button" },
           { keys: "↑  ↓", action: "Choose an option in an open menu" },
           { keys: "Enter", action: "Confirm the menu choice" },
-          { keys: "Esc", action: "Close the menu or panel" }
+          { keys: "Esc", action: "Close the menu or return to profiles" }
         ]
       }]
     } else {
@@ -74,7 +75,7 @@ Item {
     if (root.page !== "reuse") contextual.push({
       title: "Anywhere",
       bindings: [
-        { keys: "1  2  3  4", action: "Switch tabs (4 opens Reuse layout)" },
+        { keys: "1  2  3", action: "Switch tabs" },
         { keys: "a", action: "Apply the current draft or selected profile" },
         { keys: "s", action: "Save the current draft as a profile" },
         { keys: "r", action: "Reset from live Hyprland state" },

@@ -20,6 +20,8 @@ Item {
   property string fontFamily: Style.font.family
   property string selectedName: ""
   property var mapping: ({})
+  property var mappingProfile: null
+  property var mappingLiveProfile: null
   readonly property var suggestions: Reuse.templates(profiles, liveProfile)
   readonly property var selected: suggestions.filter(function(item) { return item.name === root.selectedName })[0] || null
   readonly property var targetOptions: [{ value: "", label: "Leave out this saved display" }].concat(
@@ -38,14 +40,18 @@ Item {
     selectedName = name
     var item = (suggestions || []).filter(function(entry) { return entry.name === name })[0]
     mapping = item ? Model.clone(item.mapping) : ({})
+    mappingProfile = item ? Model.clone(item.profile) : null
+    mappingLiveProfile = Model.clone(liveProfile)
   }
   function reset() { choose(suggestions && suggestions.length ? suggestions[0].name : "") }
   function refresh() {
-    if ((suggestions || []).some(function(item) { return item.name === root.selectedName })) choose(selectedName)
-    else reset()
+    var item = (suggestions || []).filter(function(entry) { return entry.name === root.selectedName })[0]
+    if (!item) { reset(); return }
+    mapping = Reuse.reconcileMapping(mapping, item.profile, liveProfile, mappingProfile, mappingLiveProfile)
+    mappingProfile = Model.clone(item.profile)
+    mappingLiveProfile = Model.clone(liveProfile)
   }
-  onLiveProfileChanged: refresh()
-  onProfilesChanged: refresh()
+  onSuggestionsChanged: refresh()
   Component.onCompleted: refresh()
 
   EditorPane {

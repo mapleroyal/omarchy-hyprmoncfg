@@ -52,6 +52,110 @@ test('changing one occupied target swaps the roles without losing assignment', (
   assert.deepEqual(Reuse.assign(original, 'a', ''), { a: '', b: 'right', c: 'laptop' })
 })
 
+// Run the pane's actual refresh handlers/functions with its derived suggestions.
+function reusePane(profiles = [work], liveProfile = live) {
+  const qml = fs.readFileSync(path.join(__dirname, '..', 'LayoutReusePane.qml'), 'utf8')
+  const root = { profiles, liveProfile, selectedName: '', mapping: {},
+    mappingProfile: null, mappingLiveProfile: null, Model, Reuse }
+  root.root = root
+  Object.defineProperty(root, 'suggestions', { get: () => Reuse.templates(root.profiles, root.liveProfile) })
+  const context = vm.createContext(root)
+  for (const name of ['choose', 'reset', 'refresh']) {
+    const start = qml.indexOf('  function ' + name + '(')
+    const lineEnd = qml.indexOf('\n', start)
+    const end = qml.slice(start, lineEnd).endsWith('}') ? lineEnd : qml.indexOf('\n  }', start) + 4
+    vm.runInContext(qml.slice(start, end), context)
+  }
+  root.replace = (property, value) => {
+    root[property] = value
+    for (const handler of ['on' + property[0].toUpperCase() + property.slice(1) + 'Changed', 'onSuggestionsChanged']) {
+      const statement = qml.match(new RegExp('^  ' + handler + ': (.+)$', 'm'))
+      if (statement) vm.runInContext(statement[1], context)
+    }
+  }
+  root.refresh()
+  return root
+}
+
+test('automatic pane refresh preserves manual swaps and explicit skips', () => {
+  const pane = reusePane()
+  pane.mapping = Reuse.assign(pane.mapping, 'old-left', 'new-right')
+  pane.mapping = Reuse.assign(pane.mapping, 'laptop', '')
+  const expected = { laptop: '', 'old-left': 'new-right', 'old-right': 'new-left' }
+  pane.replace('profiles', Model.clone([work]))
+  assert.deepEqual(pane.mapping, expected)
+  pane.replace('liveProfile', { outputs: [right, { ...left, x: -1920, enabled: false }, laptop] })
+  assert.deepEqual(pane.mapping, expected)
+})
+
+test('refresh clears vanished targets without assigning same-model replacements or undoing skips', () => {
+  const pane = reusePane()
+  pane.mapping = Reuse.assign(pane.mapping, 'old-left', 'new-right')
+  pane.mapping = Reuse.assign(pane.mapping, 'laptop', '')
+  pane.replace('liveProfile', { outputs: [laptop, left, { ...right, key: 'replacement', match_key: 'replacement' }] })
+  assert.deepEqual(pane.mapping, { laptop: '', 'old-left': '', 'old-right': 'new-left' })
+  pane.replace('liveProfile', Model.clone(live))
+  assert.deepEqual(pane.mapping, { laptop: '', 'old-left': '', 'old-right': 'new-left' })
+})
+
+test('template refresh preserves selected layout and reconciles added and removed roles', () => {
+  const pane = reusePane([work, { name: 'Laptop', outputs: [laptop] }])
+  pane.choose('Work')
+  pane.mapping = Reuse.assign(pane.mapping, 'old-left', 'new-right')
+  pane.mapping = Reuse.assign(pane.mapping, 'laptop', '')
+  pane.replace('profiles', [{ ...work, outputs: [laptop, oldLeft, screen('added', 'DP-3', 'Other')] },
+    { name: 'Laptop', outputs: Model.clone(live.outputs) }])
+  assert.equal(pane.suggestions[0].name, 'Laptop')
+  assert.equal(pane.selectedName, 'Work')
+  assert.deepEqual(pane.mapping, { laptop: '', 'old-left': 'new-right', added: '' })
+  pane.choose('Laptop')
+  assert.deepEqual(pane.mapping, Reuse.suggestedMapping(pane.profiles[1], live))
+  pane.replace('profiles', [work])
+  assert.equal(pane.selectedName, 'Work')
+  assert.deepEqual(pane.mapping, Reuse.suggestedMapping(work, live))
+})
+
+test('mapping reconciliation never keeps stale, duplicate, or changed hardware identities', () => {
+  const original = { laptop: 'laptop', 'old-left': 'new-right', 'old-right': 'new-right', deleted: 'new-left' }
+  assert.deepEqual(Reuse.reconcileMapping(original, work, live, work, live),
+    { laptop: 'laptop', 'old-left': '', 'old-right': '' })
+  const changed = { outputs: [laptop, { ...left, match_key: 'replacement', serial: 'new-serial' }, right] }
+  assert.deepEqual(Reuse.reconcileMapping(Reuse.suggestedMapping(work, live), work, changed, work, live),
+    { laptop: 'laptop', 'old-left': '', 'old-right': 'new-right' })
+  assert.deepEqual(original, { laptop: 'laptop', 'old-left': 'new-right', 'old-right': 'new-right', deleted: 'new-left' })
+})
+
+test('serialless duplicate key and connector changes require remapping instead of model guesses', () => {
+  const first = { ...left, key: 'dell|panel@dp-1', match_key: 'dell|panel', serial: '' }
+  const second = { ...right, key: 'dell|panel@dp-2', match_key: 'dell|panel', serial: '' }
+  const before = { outputs: [laptop, first, second] }
+  const choices = { laptop: '', 'old-left': first.key, 'old-right': second.key }
+  assert.deepEqual(Reuse.reconcileMapping(choices, work,
+    { outputs: [laptop, { ...second, key: 'dell|panel' }] }, work, before),
+  { laptop: '', 'old-left': '', 'old-right': '' })
+  assert.deepEqual(Reuse.reconcileMapping(choices, work,
+    { outputs: [laptop, { ...first, name: 'DP-2' }, { ...second, name: 'DP-1' }] }, work, before),
+  { laptop: '', 'old-left': '', 'old-right': '' })
+  assert.deepEqual(Reuse.reconcileMapping(choices, work, Model.clone(before), work, before), choices)
+})
+
+test('unambiguous hardware keeps mappings across connector renames and live mode changes', () => {
+  const choices = { laptop: '', 'old-left': right.key, 'old-right': left.key }
+  const before = { outputs: [{ ...left, serial: 'left-serial' }, { ...right, serial: 'right-serial' }] }
+  const after = { outputs: before.outputs.map(output => ({ ...output,
+    name: output === before.outputs[0] ? 'DP-5' : 'DP-6', width: 2560, x: 100, enabled: false })) }
+  assert.deepEqual(Reuse.reconcileMapping(choices, work, after, work, before), choices)
+})
+
+test('replaced saved roles and duplicate output keys cannot silently inherit an assignment', () => {
+  const choices = Reuse.suggestedMapping(work, live)
+  const changed = { ...work, outputs: [laptop, { ...oldLeft, match_key: 'other-role' }, oldRight] }
+  assert.deepEqual(Reuse.reconcileMapping(choices, changed, live, work, live),
+    { laptop: 'laptop', 'old-left': '', 'old-right': 'new-right' })
+  assert.deepEqual(Reuse.reconcileMapping(choices, work, { outputs: [...live.outputs, left] }, work, live),
+    { laptop: 'laptop', 'old-left': '', 'old-right': 'new-right' })
+})
+
 test('different models and display counts remain available as explicit templates', () => {
   const mapping = Reuse.suggestedMapping(work, { outputs: [laptop, screen('other', 'HDMI-A-1', 'Different')] })
   assert.equal(mapping.laptop, 'laptop')

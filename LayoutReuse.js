@@ -74,6 +74,40 @@ function assign(mapping, sourceKey, targetKey) {
   return next
 }
 
+function continuousOutput(key, current, previous) {
+  var now = current.filter(function(out) { return out.key === key })
+  var before = previous.filter(function(out) { return out.key === key })
+  if (now.length !== 1 || before.length !== 1) return false
+  var a = before[0], b = now[0]
+  if (identity(a) !== identity(b) || ["make", "model", "serial"].some(function(field) {
+    return normalized(a[field]) !== normalized(b[field])
+  })) return false
+  // Duplicate identities may use connector-based keys. A connector remap needs
+  // confirmation, even if one of the old keys has been reused by another screen.
+  var ambiguous = [current, previous].some(function(outputs) {
+    return outputs.filter(function(out) { return identity(out) === identity(a) }).length > 1
+  })
+  return !ambiguous || a.name === b.name
+}
+
+// Reconcile an in-progress choice against refreshed data, without making new
+// guesses. Lost targets and new roles stay empty until the user assigns them.
+function reconcileMapping(mapping, profile, liveProfile, previousProfile, previousLiveProfile) {
+  var saved = (profile || {}).outputs || []
+  var live = (liveProfile || {}).outputs || []
+  var oldSaved = (previousProfile || {}).outputs || []
+  var oldLive = (previousLiveProfile || {}).outputs || []
+  var next = {}
+  saved.forEach(function(out) {
+    var target = (mapping || {})[out.key] || ""
+    var unique = saved.filter(function(role) { return (mapping || {})[role.key] === target }).length === 1
+    next[out.key] = target && unique
+      && continuousOutput(out.key, saved, oldSaved)
+      && continuousOutput(target, live, oldLive) ? target : ""
+  })
+  return next
+}
+
 function nextName(name, profiles) {
   var base = String(name || "Layout") + " (new setup)"
   var candidate = base, suffix = 2
@@ -105,5 +139,6 @@ function targetLabel(output, liveProfile) {
 
 if (typeof module !== "undefined") module.exports = {
   sameModel: sameModel, suggestedMapping: suggestedMapping, templates: templates,
-  assign: assign, nextName: nextName, roleLabel: roleLabel, targetLabel: targetLabel
+  assign: assign, reconcileMapping: reconcileMapping,
+  nextName: nextName, roleLabel: roleLabel, targetLabel: targetLabel
 }

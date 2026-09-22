@@ -298,8 +298,7 @@ Panel {
   readonly property var pageOptions: [
     { value: "layout", label: "1  Layout" },
     { value: "profiles", label: "2  Profiles" },
-    { value: "workspaces", label: "3  Workspaces" },
-    { value: "reuse", label: "4  Reuse layout" }
+    { value: "workspaces", label: "3  Workspaces" }
   ]
   readonly property var inspectorOptions: [
     { value: "display", label: "Display" },
@@ -879,6 +878,12 @@ Panel {
     Qt.callLater(function() { reusePane.focusFirst() })
   }
 
+  function leaveLayoutReuse() {
+    if (root.reusePending) return
+    root.activePage = "profiles"
+    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+  }
+
   function reuseLayout(name, mapping) {
     if (!root.managedChecked || !root.editorReady || root.editorLoading || root.readPending || root.editorSnapshotStale || root.reusePending || root.draftDirty
         || root.creatingProfile || root.editPending || root.previewTransaction !== "" || root.previewPending) return
@@ -1149,9 +1154,8 @@ Panel {
       else if (key === "n" || key === "N") root.revertPreview()
       return
     }
-    if (key === "1" || key === "2" || key === "3" || key === "4") {
-      if (key === "4") root.openLayoutReuse()
-      else root.activePage = key === "1" ? "layout" : (key === "2" ? "profiles" : "workspaces")
+    if (key === "1" || key === "2" || key === "3") {
+      root.activePage = key === "1" ? "layout" : (key === "2" ? "profiles" : "workspaces")
       return
     }
     if (key === "?") {
@@ -1193,6 +1197,7 @@ Panel {
     } else if (root.activePage === "profiles") {
       if (key === "e") root.beginExecEdit()
       else if (key === "d") root.deleteSelectedSavedProfile()
+      else if (key === "u" && root.selectedSavedProfile) root.openLayoutReuse(root.selectedSavedProfileName)
     } else if (root.activePage === "workspaces") {
       if (key === "-" || key === "_") root.adjustWorkspaceKeyboard(-1)
       else if (key === "+" || key === "=") root.adjustWorkspaceKeyboard(1)
@@ -2462,17 +2467,14 @@ Panel {
                 focusable: true
                 text: String(modelData.label || "")
                 selected: String(modelData.value || "") === root.activePage
+                  || (modelData.value === "profiles" && root.activePage === "reuse")
                 foreground: root.foreground
                 fontFamily: root.fontFamily
                 fontSize: Style.font.caption
                 horizontalPadding: Style.space(7)
                 verticalPadding: Style.space(3)
-                enabled: !root.reusePending && (modelData.value !== "reuse"
-                  || (root.editorReady && !root.draftDirty && !root.creatingProfile))
-                onClicked: {
-                  if (modelData.value === "reuse") root.openLayoutReuse()
-                  else root.activePage = String(modelData.value || "layout")
-                }
+                enabled: !root.reusePending
+                onClicked: root.activePage = String(modelData.value || "layout")
               }
             }
           }
@@ -2679,7 +2681,7 @@ Panel {
             fontFamily: root.fontFamily
             onUseRequested: function(name, mapping) { root.reuseLayout(name, mapping) }
             onIdentifyRequested: function(key) { root.identifyOutput(key, root.editorDocument.profile) }
-            onCloseRequested: root.close()
+            onCloseRequested: root.leaveLayoutReuse()
           }
 
           Item {
@@ -3960,7 +3962,7 @@ Panel {
           readonly property real controlHeight: Math.ceil(Math.max(
             openTuiButton.implicitHeight, profileNameInput.implicitHeight,
             currentProfileBadge.implicitHeight, activateFooterButton.implicitHeight,
-            discardDraftButton.implicitHeight, saveDraftButton.implicitHeight))
+            discardDraftButton.implicitHeight, saveDraftButton.implicitHeight, reuseFooterButton.implicitHeight))
           height: Math.max(Style.space(58), controlHeight + Style.space(18))
           color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.025)
           borderSpec: Border.controlSpec(root.draftDirty || root.creatingProfile ? "selected" : "normal", root.foreground, Color.accent)
@@ -3990,6 +3992,7 @@ Panel {
                 - openTuiButton.width
                 - (currentProfileBadge.visible ? currentProfileBadge.width + parent.spacing : 0)
                 - (activateFooterButton.visible ? activateFooterButton.width + parent.spacing : 0)
+                - (reuseFooterButton.visible ? reuseFooterButton.width + parent.spacing : 0)
                 - (discardDraftButton.visible ? discardDraftButton.width + parent.spacing : 0)
                 - (saveDraftButton.visible ? saveDraftButton.width + parent.spacing : 0)
                 - (profileNameInput.visible ? profileNameInput.width + parent.spacing : 0)
@@ -4104,6 +4107,26 @@ Panel {
               foreground: root.foreground
               fontFamily: root.fontFamily
               onClicked: root.activateSelectedSavedProfile()
+            }
+
+            Button {
+              id: reuseFooterButton
+              anchors.verticalCenter: parent.verticalCenter
+              height: editorFooter.controlHeight
+              visible: root.activePage === "profiles" || root.activePage === "reuse"
+              text: root.activePage === "reuse" ? "Back to profiles" : "Reuse layout…"
+              focusable: true
+              bordered: true
+              enabled: !root.reusePending && (root.activePage === "reuse"
+                || (root.managedChecked && root.editorReady && !root.editorLoading
+                  && !root.draftDirty && !root.creatingProfile && !root.editPending
+                  && !!root.selectedSavedProfile && root.previewTransaction === "" && !root.previewPending))
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              onClicked: {
+                if (root.activePage === "reuse") root.leaveLayoutReuse()
+                else root.openLayoutReuse(root.selectedSavedProfileName)
+              }
             }
 
             Button {

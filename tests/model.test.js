@@ -14,7 +14,7 @@ function panelFunction(name, root, globals = {}) {
 test("footer controls share their tallest natural height and keep naming beside save", () => {
   const qml = fs.readFileSync(path.join(__dirname, "..", "Panel.qml"), "utf8")
   const footer = qml.slice(qml.indexOf("id: editorFooter"), qml.indexOf("\n      KeyboardHelp {"))
-  const controls = ["openTuiButton", "profileNameInput", "currentProfileBadge", "activateFooterButton", "discardDraftButton", "saveDraftButton"]
+  const controls = ["openTuiButton", "profileNameInput", "currentProfileBadge", "activateFooterButton", "discardDraftButton", "saveDraftButton", "reuseFooterButton"]
   const height = footer.match(/readonly property real controlHeight: ([\s\S]*?)\n          height:/)[1]
   for (const tallest of controls) {
     const sizes = Object.fromEntries(controls.map(id => [id, { implicitHeight: id === tallest ? 43.2 : 30 }]))
@@ -992,7 +992,7 @@ test("reuse keyboard help describes native controls instead of workspace shortcu
   assert.ok(reuse[0].bindings.some(binding => binding.keys === "Tab, Shift+Tab"))
   assert.ok(reuse[0].bindings.some(binding => binding.keys === "Esc"))
   for (const page of ["layout", "profiles", "workspaces"])
-    assert.ok(groups(page).some(group => group.bindings.some(binding => binding.keys === "1  2  3  4")))
+    assert.ok(groups(page).some(group => group.bindings.some(binding => binding.keys === "1  2  3")))
 })
 
 test("manual profile choice is explicit and can return to automatic matching", () => {
@@ -1877,4 +1877,44 @@ test("coordinator preview transitions invalidate panel status reads on its separ
     panel.receive(id, { monitors: [], daemon: {} })
     assert.equal(panel.root.document, current, signal)
   }
+})
+
+test("reuse is a selected-profile action within the three main pages", () => {
+  const qml = fs.readFileSync(path.join(__dirname, "..", "Panel.qml"), "utf8")
+  const choices = vm.runInNewContext(qml.match(/readonly property var pageOptions: (\[[\s\S]*?\n  \])/)[1])
+  assert.deepEqual(Array.from(choices, choice => choice.value).sort(), ["layout", "profiles", "workspaces"])
+  const panel = editorRefreshPanel()
+  const selected = []
+  let focused = false
+  const globals = { Qt: { callLater: fn => fn() },
+    reusePane: { choose: name => selected.push(name), reset() {}, focusFirst() {} },
+    keyCatcher: { forceActiveFocus: () => { focused = true } } }
+  panel.root.openLayoutReuse = panelFunction("openLayoutReuse", panel.root, globals)
+  panel.root.leaveLayoutReuse = panelFunction("leaveLayoutReuse", panel.root, globals)
+  const key = panelFunction("handleExpandedText", panel.root, globals)
+  for (let index = 0; index < choices.length; index++) {
+    key(String(index + 1))
+    assert.equal(panel.root.activePage, choices[index].value)
+  }
+  panel.root.activePage = "layout"
+  key("4")
+  key("u")
+  assert.equal(panel.root.activePage, "layout", "reuse is contextual, not a fourth page")
+  panel.root.activePage = "profiles"
+  panel.root.selectedSavedProfileName = "Other"
+  panel.root.draftDirty = true
+  key("u")
+  assert.equal(panel.root.activePage, "profiles", "reuse cannot discard an existing draft")
+  panel.root.draftDirty = false
+  key("u")
+  assert.equal(panel.root.activePage, "reuse")
+  assert.deepEqual(selected, ["Other"], "reuse starts with the selected saved profile")
+  panel.root.reusePending = true
+  panel.root.leaveLayoutReuse()
+  assert.equal(panel.root.activePage, "reuse", "wait for an in-flight draft request")
+  panel.root.reusePending = false
+  panel.root.leaveLayoutReuse()
+  assert.equal(panel.root.activePage, "profiles")
+  assert.equal(focused, true, "return restores keyboard control of the profiles page")
+  assert.equal(panel.root.selectedSavedProfileName, "Other")
 })
