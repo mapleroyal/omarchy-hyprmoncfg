@@ -20,6 +20,8 @@ Item {
 
   property int requestSequence: 0
   property var pendingMethods: ({})
+  property var pendingContexts: ({})
+  property int statusRevision: 0
   property string transactionId: ""
   property string profileName: ""
   property string deadline: ""
@@ -32,6 +34,9 @@ Item {
   property string errorMessage: ""
   property string actionError: ""
   property string targetScreenName: ""
+  onTransactionIdChanged: root.statusRevision++
+  onRequestPendingChanged: root.statusRevision++
+  onActionPendingChanged: root.statusRevision++
 
   readonly property bool opened: root.stage !== "idle"
   readonly property string dialogScreenName: {
@@ -61,6 +66,8 @@ Item {
     }
     if (params !== undefined && params !== null) request.params = params
     root.pendingMethods[id] = method
+    if (method === "status" || method === "subscribe")
+      root.pendingContexts[id] = { statusRevision: root.statusRevision }
     backendSocket.write(JSON.stringify(request) + "\n")
     backendSocket.flush()
     return id
@@ -210,6 +217,7 @@ Item {
 
   function updateDocument(value) {
     if (!value || typeof value !== "object") return
+    root.statusRevision++
     root.syncPreview(value.daemon ? value.daemon.preview : null)
   }
 
@@ -222,7 +230,12 @@ Item {
     }
 
     var method = root.pendingMethods[String(envelope.id)] || ""
+    var context = root.pendingContexts[String(envelope.id)] || ({})
     delete root.pendingMethods[String(envelope.id)]
+    delete root.pendingContexts[String(envelope.id)]
+    // A newer event or preview transition makes an earlier read obsolete.
+    if ((method === "status" || method === "subscribe")
+        && context.statusRevision !== root.statusRevision) return
     if (envelope.error) {
       var message = String(envelope.error.message || "hyprmoncfg request failed")
       if (method === "preview") {
@@ -268,6 +281,7 @@ Item {
       else {
         var wasPending = root.requestPending
         root.pendingMethods = ({})
+        root.pendingContexts = ({})
         root.clear()
         if (wasPending) root.requestFinished(false, "hyprmoncfg disconnected during the preview. Reconnecting…")
       }

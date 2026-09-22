@@ -89,7 +89,21 @@ function roleLabel(output) {
     + (output.enabled === false ? " · off" : "")
 }
 
+function targetLabel(output, liveProfile) {
+  var label = [String(output.name || "Display"), [output.make, output.model].filter(Boolean).join(" ")]
+    .filter(Boolean).join(" · ")
+  if (output.enabled === false) return label + " · Off"
+  var mirror = String(output.mirror_of || "").trim()
+  if (mirror !== "") {
+    var source = ((liveProfile || {}).outputs || []).filter(function(item) {
+      return item.key === mirror || item.name === mirror
+    })[0]
+    return label + " · Mirrors " + (source ? source.name : mirror)
+  }
+  return label
+}
+
 if (typeof module !== "undefined") module.exports = {
   sameModel: sameModel, suggestedMapping: suggestedMapping, templates: templates,
-  assign: assign, nextName: nextName, roleLabel: roleLabel
+  assign: assign, nextName: nextName, roleLabel: roleLabel, targetLabel: targetLabel
 }

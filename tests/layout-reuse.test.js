@@ -74,6 +74,19 @@ test('new setup names do not overwrite an existing saved profile', () => {
   assert.equal(Reuse.nextName('Work', [{ name: 'Work (new setup)' }, { name: 'Work (new setup) 2' }]), 'Work (new setup) 3')
 })
 
+test('reuse labels distinguish off and mirrored targets without removing assignment choices', () => {
+  const profile = { outputs: [laptop, { ...left, enabled: false }, { ...right, mirror_of: left.key }] }
+  const qml = fs.readFileSync(path.join(__dirname, '..', 'LayoutReusePane.qml'), 'utf8')
+  const options = qml.match(/readonly property var targetOptions: ([\s\S]*?)\n  readonly property bool hasMapping:/)[1]
+  const values = vm.runInNewContext(options, { root: { liveProfile: profile }, liveProfile: profile, Reuse })
+  assert.deepEqual(Array.from(values, option => option.value), ['', 'laptop', 'new-left', 'new-right'])
+  assert.equal(values[1].label, 'eDP-1 · Dell Panel')
+  assert.equal(values[2].label, 'DP-1 · Dell P2719H · Off')
+  assert.equal(values[3].label, 'DP-2 · Dell P2719H · Mirrors DP-1')
+  assert.equal(Reuse.targetLabel({ ...right, mirror_of: 'HDMI-A-1' }, profile),
+    'DP-2 · Dell P2719H · Mirrors HDMI-A-1')
+})
+
 function panelFunction(name, root, globals = {}) {
   const qml = fs.readFileSync(path.join(__dirname, '..', 'Panel.qml'), 'utf8')
   const source = qml.match(new RegExp('^  function ' + name + '\\([\\s\\S]*?^  }', 'm'))[0]

@@ -37,6 +37,7 @@ Panel {
   property int requestSequence: 0
   property var pendingMethods: ({})
   property var pendingContexts: ({})
+  property int statusRevision: 0
   readonly property bool readPending: Object.keys(root.pendingMethods).some(function(id) {
     return ["status", "subscribe", "editor_state", "reuse_profile"].indexOf(root.pendingMethods[id]) >= 0
   })
@@ -104,6 +105,8 @@ Panel {
   property string previewDeadline: ""
   property int previewSeconds: 0
   property bool previewPending: false
+  onPreviewPendingChanged: root.statusRevision++
+  onPreviewTransactionChanged: root.statusRevision++
   readonly property bool identifyBlockedByPreview: root.previewPending || root.previewTransaction !== ""
     || !!root.daemonPreview || (!!root.previewCoordinator && root.previewCoordinator.opened === true)
   onIdentifyBlockedByPreviewChanged: if (root.identifyBlockedByPreview) displayIdentify.clear()
@@ -519,6 +522,8 @@ Panel {
     var methods = Object.assign({}, root.pendingMethods)
     methods[id] = method
     root.pendingMethods = methods
+    if (method === "status" || method === "subscribe")
+      context = Object.assign({}, context || {}, { statusRevision: root.statusRevision })
     if (context !== undefined && context !== null) root.pendingContexts[id] = context
     backendSocket.write(JSON.stringify(request) + "\n")
     backendSocket.flush()
@@ -1294,6 +1299,7 @@ Panel {
 
   function updateDocument(value) {
     if (!value || typeof value !== "object") return
+    root.statusRevision++
     root.statusRetry = false
     root.displaysConnecting = false
     if (root.lastError === "Displays are still connecting; try again shortly.") root.lastError = ""
@@ -1364,6 +1370,9 @@ Panel {
     delete root.pendingMethods[String(envelope.id)]
     root.pendingMethods = Object.assign({}, root.pendingMethods)
     delete root.pendingContexts[String(envelope.id)]
+    // Events and preview transitions supersede snapshots from earlier reads.
+    if ((method === "status" || method === "subscribe")
+        && context.statusRevision !== root.statusRevision) return
     if (method === "reuse_profile" && context.generation !== root.reuseGeneration) return
     if (envelope.error) {
       if (method === "reuse_profile") root.reusePending = false
@@ -1476,7 +1485,9 @@ Panel {
   Connections {
     target: root.previewCoordinator
     ignoreUnknownSignals: true
-    function onTransactionIdChanged() { root.syncDaemonPreview(root.daemonPreview) }
+    function onTransactionIdChanged() { root.statusRevision++; root.syncDaemonPreview(root.daemonPreview) }
+    function onRequestPendingChanged() { root.statusRevision++ }
+    function onActionPendingChanged() { root.statusRevision++ }
     function onRequestFinished(success, message) {
       root.previewPending = false
       if (!success && String(message || "") !== "") root.lastError = String(message)

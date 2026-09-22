@@ -24,7 +24,7 @@ Item {
   readonly property var selected: suggestions.filter(function(item) { return item.name === root.selectedName })[0] || null
   readonly property var targetOptions: [{ value: "", label: "Leave out this saved display" }].concat(
     (liveProfile.outputs || []).map(function(out) {
-      return { value: out.key, label: out.name + " · " + [out.make, out.model].filter(Boolean).join(" ") }
+      return { value: out.key, label: Reuse.targetLabel(out, root.liveProfile) }
     }))
   readonly property bool hasMapping: Object.keys(mapping).some(function(key) { return !!root.mapping[key] })
   signal useRequested(string name, var mapping)

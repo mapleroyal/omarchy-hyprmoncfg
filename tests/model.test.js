@@ -176,10 +176,19 @@ function previewGuard() {
   const functions = qml.match(/^  function [\s\S]*?^  }/gm)
   const names = functions.map(source => source.match(/function (\w+)/)[1])
   const requests = []
-  const root = { requestSequence: 0, pendingMethods: {}, transactionId: "", profileName: "",
+  const state = { statusRevision: 0, pendingContexts: {}, requestSequence: 0, pendingMethods: {}, transactionId: "", profileName: "",
     deadline: "", seconds: 0, stage: "idle", actionPending: false, requestPending: false,
     saveOnCommit: false, draftApply: false, actionError: "", errorMessage: "",
     requestFinished() {} }
+  const root = new Proxy(state, {
+    set(target, key, value) {
+      const changed = target[key] !== value
+      target[key] = value
+      if (changed && qml.includes("on" + key[0].toUpperCase() + key.slice(1) + "Changed: root.statusRevision++"))
+        root.statusRevision++
+      return true
+    }
+  })
   Object.defineProperty(root, "opened", { get: () => root.stage !== "idle" })
   const socket = { connected: true, write(line) { requests.push(JSON.parse(line)) }, flush() {} }
   const context = vm.createContext({ root, Model, backendSocket: socket,
@@ -1154,7 +1163,7 @@ function editorRefreshPanel() {
     document: { monitors: [{ name: "eDP-1", enabled: true }] },
     documentReady: true, backendConnected: true, opened: true,
     editorRefreshQueued: false, editorResetQueued: false, editorLoading: false, draftDirty: false,
-    monitorTopologyRevision: 0, editorRetry: false, statusRetry: false, displaysConnecting: false,
+    statusRevision: 0, monitorTopologyRevision: 0, editorRetry: false, statusRetry: false, displaysConnecting: false,
     reusePending: false, reuseTopologyChanged: false, reuseGeneration: 0,
     creatingProfile: false, editPending: false, previewTransaction: "",
     previewPending: false, serviceActionPending: false, profileModePending: false,
@@ -1184,7 +1193,7 @@ function editorRefreshPanel() {
   })
   const keyCatcher = { get blocked() { return root.inputBlocked || root.execEditing } }
   readBlocked = vm.runInNewContext("(function() { return " + blocked + " })", { root, keyCatcher })
-  for (const match of qml.matchAll(/^  on(\w+)Changed: (root\.editorInteractionRevision\+\+)$/gm)) {
+  for (const match of qml.matchAll(/^  on(\w+)Changed: (root\.(?:editorInteractionRevision|statusRevision)\+\+)$/gm)) {
     const name = match[1][0].toLowerCase() + match[1].slice(1)
     changedHandlers[name] = vm.runInNewContext("(function() { " + match[2] + " })", { root })
   }
@@ -1776,4 +1785,96 @@ test("action rows keep their cursor positions in step with what is on screen", (
   assert.match(qml, /return root\.layoutRowIndex \+ 1/)
   assert.doesNotMatch(qml, /serviceBroken \? 2 : 1/)
   assert.doesNotMatch(qml, /serviceBroken \? 3 : 2/)
+})
+
+test("old status and subscribe replies cannot remove a preview recovered from a newer event", () => {
+  for (const method of ["status", "subscribe"]) {
+    for (const action of ["keep", "revert"]) {
+      const guard = previewGuard()
+      const id = guard.root.send(method, {})
+      const preview = { transaction_id: "recovered", reclaimable: true,
+        deadline: new Date(Date.now() + 30000).toISOString() }
+      // Events can overtake a slow read; responses on this socket stay ordered.
+      guard.receive({ type: "event", event: "status", data: { daemon: { preview } } })
+      guard.receive({ type: "response", id, result: { daemon: {} } })
+      assert.equal(guard.root.transactionId, "recovered", method)
+      assert.equal(guard.root.stage, "confirm", method)
+      assert.equal(guard.root[action](), true)
+      assert.equal(guard.requests.at(-1).params.transaction_id, "recovered")
+    }
+  }
+})
+
+test("an old status reply cannot resurrect a preview ended by a newer event", () => {
+  const guard = previewGuard()
+  const preview = { transaction_id: "finished", reclaimable: true }
+  guard.receive({ type: "event", event: "status", data: { daemon: { preview } } })
+  const id = guard.root.send("status", {})
+  guard.receive({ type: "event", event: "status", data: { daemon: {} } })
+  guard.receive({ type: "response", id, result: { daemon: { preview } } })
+  assert.equal(guard.root.transactionId, "")
+  assert.equal(guard.root.opened, false)
+})
+
+test("status reads remain usable when no event or preview transition supersedes them", () => {
+  const guard = previewGuard()
+  const id = guard.root.send("subscribe", {})
+  guard.receive({ type: "response", id, result: { daemon: {
+    preview: { transaction_id: "current", reclaimable: true }
+  } } })
+  assert.equal(guard.root.transactionId, "current")
+  const settled = guard.root.send("status", {})
+  guard.receive({ type: "response", id: settled, result: { daemon: {} } })
+  assert.equal(guard.root.opened, false)
+})
+
+test("a local preview remains pending when its earlier status read returns in socket order", () => {
+  const guard = previewGuard()
+  const read = guard.root.send("status", {})
+  guard.root.startDraftPreview({ name: "Desk" }, 30)
+  const preview = guard.requests.at(-1).id
+  guard.receive({ type: "response", id: read, result: { daemon: {} } })
+  assert.equal(guard.root.requestPending, true)
+  assert.equal(guard.root.stage, "applying")
+  guard.receive({ type: "response", id: preview, result: { id: "ours" } })
+  assert.equal(guard.root.transactionId, "ours")
+  assert.equal(guard.root.stage, "confirm")
+})
+
+test("status and subscribe replies cannot overwrite a newer topology event or restart failed recovery", () => {
+  for (const method of ["status", "subscribe"]) {
+    for (const error of [false, true]) {
+      const panel = editorRefreshPanel()
+      panel.root.statusRetry = true
+      panel.root.editorRetry = true
+      const old = Model.clone(panel.root.document)
+      const id = panel.root.send(method, {})
+      const current = { monitors: [...old.monitors, { name: "DP-3", enabled: true }], monitor_set_hash: "replacement" }
+      panel.root.handleMessage(JSON.stringify({ protocol_version: 1, type: "event", event: "status", data: current }))
+      if (error) panel.fail(id)
+      else panel.receive(id, old)
+      assert.deepEqual(panel.root.document, current, method)
+      assert.equal(panel.root.statusRetry, false, "an obsolete error cannot undo successful recovery")
+      assert.equal(panel.root.displaysConnecting, false)
+      assert.equal(panel.root.pendingMethods[id], undefined)
+      assert.equal(panel.root.pendingContexts[id], undefined)
+      panel.tick()
+      assert.equal(panel.packets.at(-1).method, "editor_state")
+      panel.receive(panel.packets.at(-1).id, { ...panel.result, monitor_set_hash: "replacement" })
+      assert.equal(panel.root.editorSnapshotStale, false)
+    }
+  }
+})
+
+test("coordinator preview transitions invalidate panel status reads on its separate socket", () => {
+  const qml = fs.readFileSync(path.join(__dirname, "..", "Panel.qml"), "utf8")
+  for (const signal of ["TransactionId", "RequestPending", "ActionPending"]) {
+    const panel = editorRefreshPanel()
+    const current = panel.root.document
+    const id = panel.root.send("status", {})
+    const handler = (qml.match(new RegExp("function on" + signal + "Changed\\(\\) \\{([^}]+)\\}")) || [])[1] || ""
+    vm.runInNewContext(handler, { root: panel.root })
+    panel.receive(id, { monitors: [], daemon: {} })
+    assert.equal(panel.root.document, current, signal)
+  }
 })
