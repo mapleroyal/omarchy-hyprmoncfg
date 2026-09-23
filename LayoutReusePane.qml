@@ -103,6 +103,7 @@ Item {
         width: parent.width
         height: Math.max(Style.space(130), choicePane.height * 0.4)
         profile: root.selected ? root.selected.profile : ({ outputs: [] })
+        editorDisplays: root.editorDisplays
         interactive: false
         framed: false
         detailed: true
