@@ -79,9 +79,15 @@ Panel {
   property string reusedTemplateName: ""
   property string reuseNotice: ""
   property int editorInteractionRevision: 0
+  // Completed previews also invalidate reads that began before the transition.
+  property int editorPreviewRevision: 0
+  readonly property bool editorPreviewBlocked: root.previewPending || root.previewTransaction !== ""
+    || (!!root.previewCoordinator && (root.previewCoordinator.requestPending === true
+      || root.previewCoordinator.actionPending === true
+      || String(root.previewCoordinator.transactionId || "") !== ""))
   readonly property bool editorRefreshBlocked: !root.opened || root.draftDirty
     || root.creatingProfile || root.editPending || root.profileModePending
-    || root.previewTransaction !== "" || root.previewPending || root.reusePending
+    || root.editorPreviewBlocked || root.reusePending
     || (keyCatcher.blocked && root.activePage !== "reuse")
     || (root.activePage === "reuse" && !root.reuseTopologyChanged)
   readonly property bool editorSnapshotStale: root.editorRefreshQueued || root.editorRetry
@@ -105,8 +111,8 @@ Panel {
   property string previewDeadline: ""
   property int previewSeconds: 0
   property bool previewPending: false
-  onPreviewPendingChanged: root.statusRevision++
-  onPreviewTransactionChanged: root.statusRevision++
+  onPreviewPendingChanged: { root.statusRevision++; root.editorPreviewRevision++ }
+  onPreviewTransactionChanged: { root.statusRevision++; root.editorPreviewRevision++ }
   readonly property bool identifyBlockedByPreview: root.previewPending || root.previewTransaction !== ""
     || !!root.daemonPreview || (!!root.previewCoordinator && root.previewCoordinator.opened === true)
   onIdentifyBlockedByPreviewChanged: if (root.identifyBlockedByPreview) displayIdentify.clear()
@@ -545,8 +551,12 @@ Panel {
   }
 
   function requestEditorState(automatic) {
-    if (!root.backendConnected || root.reusePending || root.previewTransaction !== "") return
+    if (!root.backendConnected || root.reusePending) return
     var automaticRefresh = automatic === true && !root.editorResetQueued
+    if (root.editorPreviewBlocked) {
+      root.queueEditorRefresh(automaticRefresh)
+      return
+    }
     if (automaticRefresh && root.editorRefreshBlocked) return
     if (root.editorLoading || root.readPending || root.statusRetry) {
       root.queueEditorRefresh(automaticRefresh)
@@ -558,6 +568,7 @@ Panel {
     root.send("editor_state", {}, {
       automaticEditorRefresh: automaticRefresh,
       interactionRevision: root.editorInteractionRevision,
+      previewRevision: root.editorPreviewRevision,
       topologyRevision: root.monitorTopologyRevision
     })
   }
@@ -1399,6 +1410,7 @@ Panel {
     if (method === "editor_state") {
       var snapshotChanged = !Model.monitorSnapshotsMatch(root.document, envelope.result)
       if (snapshotChanged || context.topologyRevision !== root.monitorTopologyRevision
+          || root.editorPreviewBlocked || context.previewRevision !== root.editorPreviewRevision
           || (context.automaticEditorRefresh
             && (root.editorRefreshBlocked
               || context.interactionRevision !== root.editorInteractionRevision))) {
@@ -1490,9 +1502,9 @@ Panel {
   Connections {
     target: root.previewCoordinator
     ignoreUnknownSignals: true
-    function onTransactionIdChanged() { root.statusRevision++; root.syncDaemonPreview(root.daemonPreview) }
-    function onRequestPendingChanged() { root.statusRevision++ }
-    function onActionPendingChanged() { root.statusRevision++ }
+    function onTransactionIdChanged() { root.statusRevision++; root.editorPreviewRevision++; root.syncDaemonPreview(root.daemonPreview) }
+    function onRequestPendingChanged() { root.statusRevision++; root.editorPreviewRevision++ }
+    function onActionPendingChanged() { root.statusRevision++; root.editorPreviewRevision++ }
     function onRequestFinished(success, message) {
       root.previewPending = false
       if (!success && String(message || "") !== "") root.lastError = String(message)

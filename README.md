@@ -95,6 +95,8 @@ Choose **Use an existing layout…** in compact view, or select a profile and ch
 
 **Create draft for these monitors** uses the current hardware identities and remaps the layout, mirrors, and workspaces. Extra connected displays stay in the draft. Review any adjustments, choose a new name, then use **Preview & save → Keep & save**. The original profiles remain saved, and creating the draft alone does not apply a layout.
 
+Editor refreshes wait for an active preview to finish; choosing Discard still resets the draft from a fresh layout.
+
 Layout reuse requires a daemon that advertises the `reuse_profile` capability. The panel explains when that support is unavailable; other controls remain usable. Reusing a layout does not change automatic profile selection.
 
 ## Install

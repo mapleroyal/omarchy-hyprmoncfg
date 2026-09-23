@@ -1167,7 +1167,7 @@ function editorRefreshPanel() {
     reusePending: false, reuseTopologyChanged: false, reuseGeneration: 0,
     creatingProfile: false, editPending: false, previewTransaction: "",
     previewPending: false, serviceActionPending: false, profileModePending: false,
-    execEditing: false, inputBlocked: false, editorInteractionRevision: 0,
+    execEditing: false, inputBlocked: false, editorInteractionRevision: 0, editorPreviewRevision: 0,
     managedChecked: true, editorReady: true, activePage: "layout", activeProfile: "Current",
     selectedOutputKey: "laptop", selectedSavedProfileName: "Current", profileChoice: "Current",
     sourceProfile: "Current", saveName: "Current", selectedSavedWorkspacePlan: [],
@@ -1193,12 +1193,13 @@ function editorRefreshPanel() {
   })
   const keyCatcher = { get blocked() { return root.inputBlocked || root.execEditing } }
   readBlocked = vm.runInNewContext("(function() { return " + blocked + " })", { root, keyCatcher })
-  for (const match of qml.matchAll(/^  on(\w+)Changed: (root\.(?:editorInteractionRevision|statusRevision)\+\+)$/gm)) {
+  for (const match of qml.matchAll(/^  on(\w+)Changed: (.+)$/gm)) {
+    if (!/root\.(?:editorInteractionRevision|statusRevision|editorPreviewRevision)\+\+/.test(match[2])) continue
     const name = match[1][0].toLowerCase() + match[1].slice(1)
     changedHandlers[name] = vm.runInNewContext("(function() { " + match[2] + " })", { root })
   }
   Object.defineProperty(root, "editorRefreshBlocked", { get: () => readBlocked() })
-  for (const property of ["readPending", "editorSnapshotStale"]) {
+  for (const property of ["readPending", "editorPreviewBlocked", "editorSnapshotStale"]) {
     const expression = qml.match(new RegExp("readonly property bool " + property
       + ": ([\\s\\S]*?)\\n  (?:readonly )?property"))[1]
     const get = vm.runInNewContext("(function() { return " + expression + " })", { root, Model })
@@ -1378,6 +1379,108 @@ test("intentional editor refreshes retain upstream's discard and default-selecti
   assert.equal(panel.root.selectedSavedProfileName, "Current")
   assert.equal(panel.root.selectedOutputKey, "laptop")
   assert.equal(panel.root.draftProfile.name, "Current")
+})
+
+test("explicit editor replies wait across starting, active, and completed previews before resetting", () => {
+  for (const stage of ["starting", "active", "completed"]) {
+    const panel = editorRefreshPanel()
+    const previewDraft = Model.clone(panel.root.draftProfile)
+    previewDraft.outputs[0].scale = 2
+    panel.root.draftProfile = previewDraft
+    panel.root.draftDirty = true
+    panel.root.requestEditorState()
+    const originalRead = panel.packets[0].id
+    panel.root.previewPending = true
+    if (stage !== "starting") {
+      panel.root.previewTransaction = "new-preview"
+      panel.root.previewPending = false
+    }
+    if (stage === "completed") panel.root.previewTransaction = ""
+    panel.receive(originalRead)
+    assert.equal(panel.root.draftProfile, previewDraft, stage)
+    assert.equal(panel.root.draftDirty, true, stage)
+    assert.equal(panel.root.editorLoading, false, stage)
+    assert.equal(panel.root.editorResetQueued, true, stage)
+    if (stage !== "completed") {
+      panel.tick()
+      assert.equal(panel.packets.length, 1, stage)
+    }
+    panel.root.previewPending = false
+    panel.root.previewTransaction = ""
+    panel.tick()
+    assert.equal(panel.packets.length, 2, stage)
+    assert.equal(panel.root.pendingContexts[panel.packets[1].id].automaticEditorRefresh, false, stage)
+    panel.receive(panel.packets[1].id)
+    assert.equal(panel.root.draftDirty, false, stage)
+    assert.equal(panel.root.editorResetQueued, false, stage)
+  }
+})
+
+test("coordinator transitions supersede explicit editor reads on the panel's separate socket", () => {
+  const qml = fs.readFileSync(path.join(__dirname, "..", "Panel.qml"), "utf8")
+  for (const property of ["transactionId", "requestPending", "actionPending"]) {
+    for (const completed of [false, true]) {
+      const panel = editorRefreshPanel()
+      panel.root.previewCoordinator = { transactionId: "", requestPending: false, actionPending: false }
+      panel.root.draftDirty = true
+      panel.root.requestEditorState()
+      const draft = panel.root.draftProfile
+      const signal = property[0].toUpperCase() + property.slice(1)
+      const handler = qml.match(new RegExp("function on" + signal + "Changed\\(\\) \\{([^}]+)\\}"))[1]
+      panel.root.previewCoordinator[property] = property === "transactionId" ? "coordinated" : true
+      vm.runInNewContext(handler, { root: panel.root })
+      if (completed) {
+        panel.root.previewCoordinator[property] = property === "transactionId" ? "" : false
+        vm.runInNewContext(handler, { root: panel.root })
+      }
+      panel.receive(panel.packets[0].id)
+      assert.equal(panel.root.draftProfile, draft, property)
+      assert.equal(panel.root.draftDirty, true, property)
+      assert.equal(panel.root.editorResetQueued, true, property)
+      if (!completed) {
+        panel.tick()
+        assert.equal(panel.packets.length, 1, property)
+      }
+      panel.root.previewCoordinator[property] = property === "transactionId" ? "" : false
+      vm.runInNewContext(handler, { root: panel.root })
+      panel.tick()
+      assert.equal(panel.packets.length, 2, property)
+      panel.receive(panel.packets[1].id)
+      assert.equal(panel.root.draftDirty, false, property)
+    }
+  }
+})
+
+test("explicit resets requested during preview retain intent without starting an editor read", () => {
+  for (const blocker of ["previewPending", "previewTransaction", "coordinator"]) {
+    const panel = editorRefreshPanel()
+    panel.root.draftDirty = true
+    if (blocker === "coordinator") panel.root.previewCoordinator = { requestPending: true }
+    else panel.root[blocker] = blocker === "previewTransaction" ? "active" : true
+    panel.root.requestEditorState()
+    assert.equal(panel.packets.length, 0, blocker)
+    assert.equal(panel.root.editorResetQueued, true, blocker)
+    panel.root.previewPending = false
+    panel.root.previewTransaction = ""
+    panel.root.previewCoordinator = null
+    panel.tick()
+    assert.equal(panel.packets.length, 1, blocker)
+    panel.receive(panel.packets[0].id)
+    assert.equal(panel.root.draftDirty, false, blocker)
+  }
+})
+
+test("ordinary status updates do not invalidate a pending editor snapshot", () => {
+  for (const automatic of [false, true]) {
+    const panel = editorRefreshPanel()
+    panel.root.requestEditorState(automatic)
+    panel.root.updateDocument({ monitors: panel.root.monitorSummaries })
+    panel.receive(panel.packets[0].id)
+    assert.equal(panel.root.editorLoading, false)
+    assert.equal(panel.root.editorRefreshQueued, false)
+    panel.tick()
+    assert.equal(panel.packets.length, 1)
+  }
 })
 
 test("summoning an open panel preserves drafts and input, while reopening issues one reset", () => {
