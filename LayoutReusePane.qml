@@ -156,7 +156,7 @@ Item {
               spacing: Style.space(5)
               Text {
                 width: parent.width
-                text: Reuse.roleLabel(parent.modelData)
+                text: Reuse.roleLabel(parent.modelData, root.selected ? root.selected.profile : null)
                 wrapMode: Text.WordWrap
                 textFormat: Text.PlainText
                 color: root.foreground

@@ -116,11 +116,9 @@ function nextName(name, profiles) {
   return candidate
 }
 
-function roleLabel(output) {
-  return String(output.name || "Display") + " · "
-    + [output.make, output.model].filter(Boolean).join(" ")
-    + " · " + Number(output.x || 0) + ", " + Number(output.y || 0)
-    + (output.enabled === false ? " · off" : "")
+function roleLabel(output, profile) {
+  return targetLabel(output, profile)
+    + " · Position " + Number(output.x || 0) + "," + Number(output.y || 0)
 }
 
 function targetLabel(output, liveProfile) {

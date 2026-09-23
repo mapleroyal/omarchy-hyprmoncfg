@@ -191,6 +191,22 @@ test('reuse labels distinguish off and mirrored targets without removing assignm
     'DP-2 · Dell P2719H · Mirrors HDMI-A-1')
 })
 
+test('saved role headings resolve mirror state against the saved layout rather than live connectors', () => {
+  const source = { ...oldLeft, name: 'DP-8' }
+  const mirror = { ...oldRight, name: 'DP-9', mirror_of: source.key, x: -1920, y: 120 }
+  const saved = { outputs: [source, mirror] }
+  const current = { outputs: [{ ...source, name: 'HDMI-A-1' }, { ...mirror, mirror_of: '' }] }
+  const qml = fs.readFileSync(path.join(__dirname, '..', 'LayoutReusePane.qml'), 'utf8')
+  const binding = qml.match(/text: (Reuse\.roleLabel\([^\n]+)\n/)[1]
+  const label = output => vm.runInNewContext(binding, {
+    Reuse, parent: { modelData: output }, root: { selected: { profile: saved }, liveProfile: current }
+  })
+  assert.equal(label(mirror), 'DP-9 · Dell P2719H · Mirrors DP-8 · Position -1920,120')
+  assert.equal(label({ ...mirror, mirror_of: '' }), 'DP-9 · Dell P2719H · Position -1920,120')
+  assert.equal(label({ ...mirror, enabled: false }), 'DP-9 · Dell P2719H · Off · Position -1920,120')
+  assert.equal(label({ ...mirror, mirror_of: 'DP-7' }), 'DP-9 · Dell P2719H · Mirrors DP-7 · Position -1920,120')
+})
+
 function panelFunction(name, root, globals = {}) {
   const qml = fs.readFileSync(path.join(__dirname, '..', 'Panel.qml'), 'utf8')
   const source = qml.match(new RegExp('^  function ' + name + '\\([\\s\\S]*?^  }', 'm'))[0]
