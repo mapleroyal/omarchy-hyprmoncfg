@@ -1388,7 +1388,12 @@ Panel {
     delete root.pendingContexts[String(envelope.id)]
     // Events and preview transitions supersede snapshots from earlier reads.
     if ((method === "status" || method === "subscribe")
-        && context.statusRevision !== root.statusRevision) return
+        && context.statusRevision !== root.statusRevision) {
+      // The snapshot is obsolete, but subscription still completes reconnect.
+      if (method === "subscribe" && root.opened && !root.editorReady && !root.editorLoading)
+        root.requestEditorState()
+      return
+    }
     if (method === "reuse_profile" && context.generation !== root.reuseGeneration) return
     if (envelope.error) {
       if (method === "reuse_profile") root.reusePending = false

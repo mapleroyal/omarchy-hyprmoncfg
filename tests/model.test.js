@@ -1969,6 +1969,77 @@ test("status and subscribe replies cannot overwrite a newer topology event or re
   }
 })
 
+test("stale subscribe acknowledgements still initialize the editor after a same-topology event", () => {
+  for (const retained of ["none", "draftDirty", "creatingProfile"]) {
+    for (const error of [false, true]) {
+      const panel = editorRefreshPanel()
+      panel.root.editorReady = false // Disconnect retains the last status document.
+      if (retained !== "none") panel.root[retained] = true
+      const id = panel.root.send("subscribe", {})
+      const current = { monitors: panel.root.monitorSummaries, daemon: { profile_override: "Current" } }
+      panel.root.handleMessage(JSON.stringify({ protocol_version: 1, type: "event", event: "status", data: current }))
+      assert.equal(panel.root.editorRefreshQueued, false, "unchanged topology needs no normal refresh")
+      if (error) panel.fail(id)
+      else panel.receive(id, { monitors: [] })
+      assert.deepEqual(panel.root.document, current)
+      panel.tick()
+      assert.deepEqual(panel.requests, ["subscribe", "editor_state"])
+      assert.equal(panel.root.pendingContexts[panel.packets[1].id].automaticEditorRefresh, false)
+      panel.receive(panel.packets[1].id)
+      assert.equal(panel.root.editorReady, true)
+      assert.equal(panel.root.draftDirty, false)
+      assert.equal(panel.root.creatingProfile, false)
+      assert.equal(panel.root.statusRetry, false)
+      panel.tick()
+      assert.equal(panel.packets.length, 2)
+    }
+  }
+})
+
+test("stale subscribe acknowledgements leave an already loading or ready editor alone", () => {
+  for (const ready of [false, true]) {
+    const panel = editorRefreshPanel()
+    panel.root.editorReady = ready
+    panel.root.editorLoading = !ready
+    panel.root.draftDirty = true
+    const draft = panel.root.draftProfile
+    const subscribeId = panel.root.send("subscribe", {})
+    panel.root.updateDocument({ monitors: panel.root.monitorSummaries })
+    panel.receive(subscribeId, { monitors: [] })
+    assert.equal(panel.root.editorRefreshQueued, false)
+    assert.equal(panel.root.editorResetQueued, false)
+    panel.tick()
+    assert.deepEqual(panel.requests, ["subscribe"])
+    assert.equal(panel.root.draftProfile, draft)
+    assert.equal(panel.root.draftDirty, true)
+    assert.equal(panel.root.editorLoading, !ready)
+  }
+})
+
+test("subscribe recovery defers initial reads through previews and leaves closed panels alone", () => {
+  for (const blocker of ["previewPending", "closed"]) {
+    const panel = editorRefreshPanel()
+    panel.root.editorReady = false
+    if (blocker === "closed") panel.root.opened = false
+    else panel.root[blocker] = true
+    const draft = panel.root.draftProfile
+    const id = panel.root.send("subscribe", {})
+    panel.root.updateDocument({ monitors: panel.root.monitorSummaries })
+    panel.receive(id, { monitors: [] })
+    panel.tick()
+    assert.deepEqual(panel.requests, ["subscribe"], blocker)
+    assert.equal(panel.root.draftProfile, draft, blocker)
+    assert.equal(panel.root.editorResetQueued, blocker !== "closed", blocker)
+    assert.equal(panel.root.editorRefreshQueued, blocker !== "closed", blocker)
+    if (blocker === "previewPending") {
+      panel.root.previewPending = false
+      panel.tick()
+      panel.receive(panel.packets[1].id)
+      assert.equal(panel.root.editorReady, true)
+    }
+  }
+})
+
 test("coordinator preview transitions invalidate panel status reads on its separate socket", () => {
   const qml = fs.readFileSync(path.join(__dirname, "..", "Panel.qml"), "utf8")
   for (const signal of ["TransactionId", "RequestPending", "ActionPending"]) {
