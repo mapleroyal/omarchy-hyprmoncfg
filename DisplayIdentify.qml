@@ -2,142 +2,79 @@ import QtQuick
 import Quickshell
 import Quickshell.Wayland
 import qs.Commons
-import "IdentifyModel.js" as IdentifyModel
 
-// Visual-only cue. Never changes the layout, focuses a window, or grabs input.
-// Owned by the requesting panel: closing or rebuilding it cancels the cue.
-// Unlike a preview decision, an obsolete identification must not be restored.
+// Input-transparent cues, following the layer-shell approach reviewed in PR #18.
+// Owned by the persistent preview service, never by an individual bar instance.
 Item {
   id: root
-
-  readonly property var availableScreens: Quickshell.screens || []
-  property var targetScreen: null
-  property string connectorName: ""
-  property string displayLabel: ""
-  property string lastError: ""
-  property bool active: false
-  property int duration: 2000
-  property color accent: Color.accent
-  property string fontFamily: Style.font.family
-
-  function identify(output, currentProfile, editorDisplays) {
-    var result = IdentifyModel.target(output, currentProfile, editorDisplays, root.availableScreens)
-    root.clear()
-    root.lastError = result.error
-    if (!result.screen) return false
-    root.targetScreen = result.screen
-    root.connectorName = result.connector
-    root.displayLabel = result.label
-    root.active = true
-    expiry.restart()
-    return true
+  property var targets: []
+  function clear() { expiry.stop(); root.targets = [] }
+  function show(items) { root.targets = items; expiry.restart() }
+  Timer { id: expiry; interval: 4000; onTriggered: root.clear() }
+  Connections {
+    target: Quickshell
+    function onScreensChanged() { root.clear() }
   }
-
-  function clear() {
-    expiry.stop()
-    root.active = false
-    root.targetScreen = null
-    root.connectorName = ""
-    root.displayLabel = ""
-  }
-
-  function refreshScreens() {
-    if (root.active && !IdentifyModel.containsScreen(root.targetScreen, root.availableScreens))
-      root.clear()
-  }
-
-  onAvailableScreensChanged: root.refreshScreens()
-
-  Timer {
-    id: expiry
-    interval: Math.max(250, root.duration)
-    repeat: false
-    onTriggered: root.clear()
-  }
-
   Variants {
-    model: root.availableScreens
-
+    model: root.targets
     PanelWindow {
-      id: cueWindow
       required property var modelData
-      screen: modelData
-      visible: root.active && root.targetScreen === modelData
+      screen: modelData.screen
+      visible: true
       color: "transparent"
       exclusionMode: ExclusionMode.Ignore
       WlrLayershell.namespace: "hyprmoncfg-display-identify"
       WlrLayershell.layer: WlrLayer.Overlay
       WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
       anchors { top: true; bottom: true; left: true; right: true }
-      // Empty input region keeps every pointer event on the desktop below.
       mask: Region {}
-
-      Rectangle {
-        anchors.fill: parent
-        anchors.margins: Style.space(8)
-        color: "transparent"
-        border.color: "#ffffff"
-        border.width: Style.space(2)
-        radius: Style.space(15)
-
-        Rectangle {
-          anchors.fill: parent
-          anchors.margins: Style.space(3)
-          color: "transparent"
-          border.color: root.accent
-          border.width: Style.space(6)
-          radius: Style.space(12)
-        }
-      }
-
       Rectangle {
         anchors.centerIn: parent
-        width: Math.max(1, Math.min(parent.width - Style.space(48), Style.space(620)))
-        height: labelColumn.implicitHeight + Style.space(40)
-        color: "#ee11151d"
-        border.color: root.accent
-        border.width: Style.space(3)
-        radius: Style.space(16)
-
+        width: Math.min(parent.width - Style.space(32), Style.space(480))
+        height: labels.implicitHeight + Style.space(32)
+        color: Color.background
+        border.color: Color.accent
+        border.width: 3
+        radius: Style.cornerRadius
         Column {
-          id: labelColumn
+          id: labels
           anchors.centerIn: parent
-          width: Math.max(1, parent.width - Style.space(40))
-          spacing: Style.space(8)
-
+          width: parent.width - Style.space(24)
+          spacing: Style.space(6)
           Text {
             textFormat: Text.PlainText
             width: parent.width
-            text: "This display"
-            color: "#cbd5e1"
-            font.family: root.fontFamily
-            font.pixelSize: Style.space(18)
-            horizontalAlignment: Text.AlignHCenter
-          }
-
-          Text {
-            textFormat: Text.PlainText
-            width: parent.width
-            text: root.connectorName
-            color: "#ffffff"
-            font.family: root.fontFamily
-            font.pixelSize: Style.space(40)
+            text: modelData.summary.connector
+            color: Color.accent
+            font.family: Style.font.family
+            font.pixelSize: Style.space(32)
             font.bold: true
             horizontalAlignment: Text.AlignHCenter
-            elide: Text.ElideRight
           }
-
           Text {
             textFormat: Text.PlainText
             width: parent.width
-            text: root.displayLabel
-            color: "#e2e8f0"
-            font.family: root.fontFamily
-            font.pixelSize: Style.space(20)
-            horizontalAlignment: Text.AlignHCenter
+            text: modelData.summary.model
+            color: Color.foreground
+            font.family: Style.font.family
+            font.pixelSize: Style.font.body
             wrapMode: Text.Wrap
-            maximumLineCount: 2
-            elide: Text.ElideRight
+            horizontalAlignment: Text.AlignHCenter
+          }
+          Repeater {
+            model: [modelData.summary.mode, modelData.summary.placement, modelData.summary.workspaces]
+            delegate: Text {
+              required property string modelData
+              visible: modelData !== ""
+              width: labels.width
+              textFormat: Text.PlainText
+              text: modelData
+              color: Color.foreground
+              font.family: Style.font.family
+              font.pixelSize: Style.font.body
+              wrapMode: Text.Wrap
+              horizontalAlignment: Text.AlignHCenter
+            }
           }
         }
       }

@@ -6,6 +6,7 @@ import Quickshell.Wayland
 import qs.Commons
 import qs.Ui
 import "Model.js" as Model
+import "IdentifyModel.js" as IdentifyModel
 
 // Display previews can rebuild every per-monitor bar instance. Keep the
 // safety decision in a shell-level service so the confirmation is already on
@@ -37,6 +38,54 @@ Item {
   onTransactionIdChanged: root.statusRevision++
   onRequestPendingChanged: root.statusRevision++
   onActionPendingChanged: root.statusRevision++
+  property bool foreignPreviewActive: false
+  property bool identifyPending: false
+  property string identifyKey: ""
+  property string identifyRequestId: ""
+  property string identifyError: ""
+  property var document: ({})
+  property int identifyTopologyRevision: 0
+  property int identifyRequestRevision: 0
+
+  function cancelIdentify() {
+    root.identifyPending = false
+    root.identifyRequestId = ""
+    identifyTimeout.stop()
+    identifyOverlay.clear()
+  }
+
+  function identifyDisplays(key) {
+    root.identifyError = ""
+    if (!root.connected || root.opened || root.foreignPreviewActive || root.identifyPending) {
+      root.identifyError = "Identify is unavailable while a preview is active or the service is busy."
+      return false
+    }
+    root.identifyKey = String(key || "")
+    root.identifyRequestRevision = root.identifyTopologyRevision
+    root.identifyPending = true
+    identifyOverlay.clear()
+    root.identifyRequestId = root.send("editor_state", {})
+    identifyTimeout.restart()
+    return true
+  }
+
+  DisplayIdentify { id: identifyOverlay }
+  Timer {
+    id: identifyTimeout
+    interval: 7000
+    onTriggered: {
+      root.identifyPending = false
+      root.identifyError = "Reading displays timed out. Try Identify again."
+    }
+  }
+  onOpenedChanged: if (opened) root.cancelIdentify()
+  Connections {
+    target: Quickshell
+    function onScreensChanged() {
+      root.identifyTopologyRevision++
+      root.cancelIdentify()
+    }
+  }
 
   readonly property bool opened: root.stage !== "idle"
   readonly property string dialogScreenName: {
@@ -111,7 +160,7 @@ Item {
     var value = profile || ({})
     return root.beginPreview({
       profile: value,
-      timeout_seconds: Math.max(1, Number(timeoutSeconds || 10)),
+      timeout_seconds: Math.max(1, Number(timeoutSeconds || 30)),
       save_on_commit: true
     }, String(value.name || "Display layout"), true, true)
   }
@@ -120,7 +169,7 @@ Item {
     var value = profile || ({})
     return root.beginPreview({
       profile: value,
-      timeout_seconds: Math.max(1, Number(timeoutSeconds || 10)),
+      timeout_seconds: Math.max(1, Number(timeoutSeconds || 30)),
       save_on_commit: false
     }, String(value.name || "Display layout"), false, true)
   }
@@ -130,7 +179,7 @@ Item {
     if (selected === "") return false
     return root.beginPreview({
       profile_name: selected,
-      timeout_seconds: Math.max(1, Number(timeoutSeconds || 10))
+      timeout_seconds: Math.max(1, Number(timeoutSeconds || 30))
     }, selected, false, false)
   }
 
@@ -218,6 +267,16 @@ Item {
   function updateDocument(value) {
     if (!value || typeof value !== "object") return
     root.statusRevision++
+    var previous = root.document || ({})
+    var changed = Model.monitorStateSignature(previous.monitors) !== Model.monitorStateSignature(value.monitors)
+      || String(previous.monitor_set_hash || "") !== String(value.monitor_set_hash || "")
+    root.document = value
+    if (changed) {
+      root.identifyTopologyRevision++
+      root.cancelIdentify()
+    }
+    root.foreignPreviewActive = !!(value.daemon && value.daemon.preview)
+    if (root.foreignPreviewActive) root.cancelIdentify()
     root.syncPreview(value.daemon ? value.daemon.preview : null)
   }
 
@@ -236,8 +295,15 @@ Item {
     // A newer event or preview transition makes an earlier read obsolete.
     if ((method === "status" || method === "subscribe")
         && context.statusRevision !== root.statusRevision) return
+    if (method === "editor_state"
+        && (String(envelope.id) !== root.identifyRequestId || !root.identifyPending)) return
     if (envelope.error) {
       var message = String(envelope.error.message || "hyprmoncfg request failed")
+      if (method === "editor_state") {
+        root.identifyPending = false
+        identifyTimeout.stop()
+        root.identifyError = message
+      }
       if (method === "preview") {
         root.requestPending = false
         root.stage = "error"
@@ -250,7 +316,29 @@ Item {
       return
     }
 
-    if (method === "subscribe" || method === "status") {
+    if (method === "editor_state") {
+      root.identifyPending = false
+      identifyTimeout.stop()
+      if (root.opened || root.foreignPreviewActive) return
+      if (root.identifyRequestRevision !== root.identifyTopologyRevision
+          || !Model.monitorSnapshotsMatch(root.document, envelope.result)) {
+        root.identifyError = "The displays changed. Refresh before identifying them again."
+        root.send("status", {})
+        return
+      }
+      if (root.identifyKey !== "") {
+        var editor = envelope.result || ({})
+        var target = IdentifyModel.target(Model.outputByKey(editor.profile, root.identifyKey),
+          editor.profile, editor.displays, Quickshell.screens || [])
+        if (!target.screen) {
+          root.identifyError = target.error
+          return
+        }
+      }
+      var targets = Model.identifyTargets(envelope.result, Quickshell.screens || [], root.identifyKey)
+      if (!targets.length) root.identifyError = "No awake, enabled display is available to identify."
+      else identifyOverlay.show(targets)
+    } else if (method === "subscribe" || method === "status") {
       root.updateDocument(envelope.result)
     } else if (method === "preview") {
       var transaction = envelope.result || ({})
@@ -263,10 +351,12 @@ Item {
       root.requestFinished(true, "")
     } else if (method === "commit" || method === "revert") {
       root.clear()
+      root.previewFinished()
     }
   }
 
   Component.onCompleted: backendSocket.connected = root.socketPath !== "/hyprmoncfgd.sock"
+  signal previewFinished()
 
   Socket {
     id: backendSocket
@@ -279,6 +369,8 @@ Item {
     onConnectedChanged: {
       if (connected) root.send("subscribe", {})
       else {
+        root.identifyTopologyRevision++
+        root.cancelIdentify()
         var wasPending = root.requestPending
         root.pendingMethods = ({})
         root.pendingContexts = ({})

@@ -55,106 +55,209 @@ test("disabled, sleeping, mirrored, unavailable, and ambiguous targets give an i
     "identify the currently enabled physical display even if the saved draft disables it")
 })
 
-function overlay() {
+function identificationService() {
   const qml = fs.readFileSync(path.join(__dirname, "..", "DisplayIdentify.qml"), "utf8")
-  const root = { availableScreens: [], targetScreen: null, connectorName: "", displayLabel: "", active: false, lastError: "" }
+  const overlay = { targets: [] }
   const expiry = { running: false, starts: 0,
     stop() { this.running = false }, restart() { this.running = true; this.starts++ } }
-  const context = vm.createContext({ root, expiry, IdentifyModel })
-  for (const name of ["identify", "clear", "refreshScreens"]) {
-    const source = qml.match(new RegExp("^  function " + name + "\\([\\s\\S]*?^  }", "m"))[0]
-    root[name] = vm.runInContext("(" + source + ")", context)
+  const overlayContext = vm.createContext({ root: overlay, expiry })
+  for (const name of ["clear", "show"]) {
+    const source = qml.match(new RegExp("^  function " + name + "\\([^\\n]+", "m"))[0]
+    overlay[name] = vm.runInContext("(" + source + ")", overlayContext)
   }
-  return { root, expiry,
-    expire() { vm.runInContext(qml.match(/onTriggered: ([^\n]+)/)[1], context) },
-    changedScreens() { vm.runInContext(qml.match(/onAvailableScreensChanged: ([^\n]+)/)[1], context) }
+  const guardQml = fs.readFileSync(path.join(__dirname, "..", "PreviewGuard.qml"), "utf8")
+  const functions = guardQml.match(/^  function [\s\S]*?^  }/gm)
+  const names = functions.map(source => source.match(/function (\w+)/)[1])
+  const packets = []
+  const screens = { screens: [] }
+  const timeout = { running: false, stop() { this.running = false }, restart() { this.running = true } }
+  const state = { connected: true, requestSequence: 0, pendingMethods: {}, pendingContexts: {}, statusRevision: 0, stage: "idle",
+    transactionId: "", requestPending: false, identifyPending: false,
+    identifyTopologyRevision: 0, identifyRequestRevision: 0, document: {},
+    identifyRequestId: "", identifyError: "", foreignPreviewActive: false }
+  const root = new Proxy(state, {
+    set(target, key, value) {
+      const changed = target[key] !== value
+      target[key] = value
+      if (changed && guardQml.includes("on" + key[0].toUpperCase() + key.slice(1) + "Changed: root.statusRevision++"))
+        root.statusRevision++
+      return true
+    }
+  })
+  Object.defineProperty(root, "opened", { get: () => root.stage !== "idle" })
+  const context = vm.createContext({ root, IdentifyModel, Model: require("../Model.js"),
+    identifyOverlay: overlay, identifyTimeout: timeout, Quickshell: screens,
+    backendSocket: { connected: true, flush() {}, write(line) { packets.push(JSON.parse(line)) } },
+    previewClock: { start() {}, stop() {} }, Hyprland: { focusedMonitor: null } })
+  vm.runInContext(functions.join("\n") + "\nObject.assign(root, {" + names.join(",") + "})", context)
+  return { root, overlay, expiry, timeout, packets, screens,
+    receive(id, result) { root.handleMessage(JSON.stringify({ protocol_version: 1, type: "response", id, result })) },
+    fail(id) { root.handleMessage(JSON.stringify({ protocol_version: 1, type: "response", id,
+      error: { message: "obsolete read failed" } })) },
+    expire() { vm.runInContext("root.clear()", overlayContext) },
+    changedScreens() {
+      const handler = guardQml.match(/function onScreensChanged\(\) \{([\s\S]*?)\n    }/)[1]
+      vm.runInContext(handler, context)
+    }
   }
 }
 
-test("the cue replaces previous targets and clears its screen and labels on timeout", () => {
+function serviceFixture() {
   const f = fixture()
-  const cue = overlay()
-  cue.root.availableScreens = [f.screen]
-  assert.equal(cue.root.identify(f.output, f.profile, f.displays), true)
-  assert.equal(cue.root.active, true)
-  assert.equal(cue.root.targetScreen, f.screen)
-  assert.equal(cue.expiry.starts, 1)
-  cue.root.identify(f.output, f.profile, f.displays)
-  assert.equal(cue.expiry.starts, 2)
-  cue.expire()
-  assert.equal(cue.root.active, false)
-  assert.equal(cue.root.targetScreen, null)
-  assert.equal(cue.root.connectorName, "")
-  assert.equal(cue.root.displayLabel, "")
-  assert.equal(cue.expiry.running, false)
+  f.current.width = 1920
+  f.current.height = 1080
+  const service = identificationService()
+  service.screens.screens = [f.screen]
+  const status = { monitors: [{ name: "DP-3", enabled: true }], monitor_set_hash: "original" }
+  const editor = { profile: f.profile, displays: f.displays, monitor_set_hash: "original" }
+  service.root.updateDocument(status)
+  return { ...service, ...f, status, editor }
+}
+
+test("selected and all-screen identification use fresh snapshots through one expiring service", () => {
+  const f = serviceFixture()
+  for (const key of [f.output.key, ""]) {
+    assert.equal(f.root.identifyDisplays(key), true)
+    assert.equal(f.overlay.targets.length, 0, "a new request clears the previous cue while reading live state")
+    f.receive(f.packets.at(-1).id, f.editor)
+    assert.equal(f.overlay.targets.length, 1)
+    assert.equal(f.overlay.targets[0].screen, f.screen)
+    assert.equal(f.overlay.targets[0].summary.connector, "DP-3")
+    assert.equal(f.expiry.running, true)
+  }
+  assert.equal(f.expiry.starts, 2)
+  f.expire()
+  assert.equal(f.overlay.targets.length, 0)
+  assert.equal(f.expiry.running, false)
 })
 
-test("unplug/replacement and failed identification remove the old cue without choosing another screen", () => {
-  const f = fixture()
-  const cue = overlay()
-  cue.root.availableScreens = [f.screen]
-  cue.root.identify(f.output, f.profile, f.displays)
-  cue.root.availableScreens = [{ ...f.screen }]
-  cue.changedScreens()
-  assert.equal(cue.root.active, false, "a replacement screen object must not inherit the cue")
-  assert.equal(cue.expiry.running, false)
-  cue.root.availableScreens = [f.screen]
-  cue.root.identify(f.output, f.profile, f.displays)
-  assert.equal(cue.root.identify({ key: "missing" }, f.profile, f.displays), false)
-  assert.equal(cue.root.active, false)
-  assert.match(cue.root.lastError, /not connected/)
-})
-
-test("topology and hardware changes cancel an active cue even while its Qt screen survives", () => {
+test("canvas and reuse identification request a live service snapshot instead of using a cached profile", () => {
+  const f = serviceFixture()
   const qml = fs.readFileSync(path.join(__dirname, "..", "Panel.qml"), "utf8")
-  const source = qml.match(/^  function updateDocument\([\s\S]*?^  }/m)[0]
-  const changed = (qml.match(/onMonitorTopologyRevisionChanged: ([^\n]+)/) || [])[1] || ""
+  const root = { backendConnected: true, editorReady: true, editorLoading: false,
+    editorSnapshotStale: false, identifyAvailable: true, previewCoordinator: f.root,
+    lastError: "An earlier identification failed" }
+  const context = vm.createContext({ root })
+  for (const name of ["identifyDisplays", "identifyOutput"]) {
+    const source = qml.match(new RegExp("^  function " + name + "\\([\\s\\S]*?^  }", "m"))[0]
+    root[name] = vm.runInContext("(" + source + ")", context)
+  }
+  root.identifyOutput(f.output.key)
+  assert.equal(root.lastError, "")
+  assert.equal(f.packets.at(-1).method, "editor_state")
+  assert.equal(f.overlay.targets.length, 0)
+  f.receive(f.packets.at(-1).id, f.editor)
+  assert.equal(f.overlay.targets[0].screen, f.screen)
+  root.editorSnapshotStale = true
+  const count = f.packets.length
+  root.identifyOutput(f.output.key)
+  assert.equal(f.packets.length, count)
+  assert.match(root.lastError, /Refresh/)
+})
+
+test("the service rejects disconnected, ambiguous, and replaced selected identities", () => {
+  for (const mutate of [
+    f => { f.editor.profile = { outputs: [] } },
+    f => { f.editor.profile.outputs.push({ ...f.current }) },
+    f => { f.screen.serialNumber = "replacement" }
+  ]) {
+    const f = serviceFixture()
+    f.root.identifyDisplays(f.output.key)
+    mutate(f)
+    f.receive(f.packets.at(-1).id, f.editor)
+    assert.equal(f.overlay.targets.length, 0)
+    assert.notEqual(f.root.identifyError, "")
+  }
+})
+
+test("topology and hardware changes cancel active and pending cues while Qt screens survive", () => {
   for (const replacement of [
     { monitors: [{ name: "DP-4", enabled: true }], monitor_set_hash: "original" },
     { monitors: [{ name: "DP-3", enabled: true }], monitor_set_hash: "replacement" }
   ]) {
-    const f = fixture()
-    const cue = overlay()
-    cue.root.availableScreens = [f.screen]
-    const root = {
-      document: { monitors: [{ name: "DP-3", enabled: true }], monitor_set_hash: "original" },
-      syncDaemonPreview() {}, queueEditorRefresh() {}
+    for (const pending of [false, true]) {
+      const f = serviceFixture()
+      f.root.identifyDisplays(f.output.key)
+      const id = f.packets.at(-1).id
+      if (!pending) f.receive(id, f.editor)
+      f.root.updateDocument({ ...f.status, monitors: [{ name: "DP-3", enabled: true, focused: true }] })
+      assert.equal(f.root.identifyPending, pending, "focus-only updates preserve a pending read")
+      assert.equal(f.overlay.targets.length, pending ? 0 : 1, "focus-only updates preserve a visible cue")
+      f.root.updateDocument(replacement)
+      assert.equal(f.screens.screens[0], f.screen)
+      assert.equal(f.overlay.targets.length, 0)
+      assert.equal(f.root.identifyPending, false)
+      assert.equal(f.expiry.running, false)
+      assert.equal(f.timeout.running, false)
+      if (pending) f.receive(id, f.editor)
+      assert.equal(f.overlay.targets.length, 0, "a late reply must not restore the obsolete request")
     }
-    const context = vm.createContext({ root, displayIdentify: cue.root, Model: require("../Model.js") })
-    let revision = 0
-    Object.defineProperty(root, "monitorTopologyRevision", {
-      get() { return revision },
-      set(value) { revision = value; vm.runInContext(changed, context) }
-    })
-    Object.defineProperty(root, "monitorSummaries", { get() { return root.document.monitors } })
-    const updateDocument = vm.runInContext("(" + source + ")", context)
-    cue.root.identify(f.output, f.profile, f.displays)
-    updateDocument({ monitors: [{ name: "DP-3", enabled: true, focused: true }], monitor_set_hash: "original" })
-    assert.equal(cue.root.active, true, "focus-only status updates must retain the cue")
-    updateDocument(replacement)
-    assert.equal(cue.root.availableScreens[0], f.screen)
-    assert.equal(cue.root.active, false, "a changed snapshot must cancel the cue without waiting for Qt")
-    assert.equal(cue.root.targetScreen, null)
-    assert.equal(cue.expiry.running, false)
-    updateDocument(replacement)
-    assert.equal(cue.root.active, false, "a later status update must not restore an old request")
   }
 })
 
-test("closing the panel cancels active identification and its expiry timer", () => {
+test("Qt screen replacement cancels requests and stale errors cannot cancel a newer identification", () => {
+  const f = serviceFixture()
+  f.root.identifyDisplays(f.output.key)
+  const old = f.packets.at(-1).id
+  f.changedScreens()
+  assert.equal(f.root.identifyPending, false)
+  f.root.identifyDisplays(f.output.key)
+  const current = f.packets.at(-1).id
+  f.fail(old)
+  assert.equal(f.root.identifyPending, true)
+  assert.equal(f.root.identifyError, "")
+  f.receive(current, f.editor)
+  assert.equal(f.overlay.targets.length, 1)
+  f.changedScreens()
+  assert.equal(f.overlay.targets.length, 0)
+})
+
+test("a newer hardware snapshot is rejected until the service refreshes its status", () => {
+  const f = serviceFixture()
+  f.root.identifyDisplays(f.output.key)
+  f.receive(f.packets.at(-1).id, { ...f.editor, monitor_set_hash: "replacement" })
+  assert.equal(f.overlay.targets.length, 0)
+  assert.match(f.root.identifyError, /displays changed/)
+  assert.equal(f.packets.at(-1).method, "status")
+  f.receive(f.packets.at(-1).id, { ...f.status, monitor_set_hash: "replacement" })
+  f.root.identifyDisplays(f.output.key)
+  f.receive(f.packets.at(-1).id, { ...f.editor, monitor_set_hash: "replacement" })
+  assert.equal(f.overlay.targets.length, 1)
+})
+
+test("an Identify recovery read cannot remove a preview announced by a newer status event", () => {
+  const f = serviceFixture()
+  f.root.identifyDisplays(f.output.key)
+  f.receive(f.packets.at(-1).id, { ...f.editor, monitor_set_hash: "replacement" })
+  const read = f.packets.at(-1)
+  assert.equal(read.method, "status")
+  const preview = { transaction_id: "recovered", reclaimable: true,
+    deadline: new Date(Date.now() + 30000).toISOString() }
+  f.root.handleMessage(JSON.stringify({ protocol_version: 1, type: "event", event: "status",
+    data: { ...f.status, daemon: { preview } } }))
+  f.receive(read.id, f.status)
+  assert.equal(f.root.transactionId, "recovered")
+  assert.equal(f.root.foreignPreviewActive, true)
+  assert.equal(f.root.stage, "confirm")
+  assert.equal(f.root.revert(), true)
+  assert.equal(f.packets.at(-1).params.transaction_id, "recovered")
+})
+
+test("closing a panel leaves its cue with the persistent service until expiry", () => {
+  const f = serviceFixture()
+  f.root.identifyDisplays(f.output.key)
+  f.receive(f.packets.at(-1).id, f.editor)
   const qml = fs.readFileSync(path.join(__dirname, "..", "Panel.qml"), "utf8")
   const close = qml.match(/^  function close\([\s\S]*?^  }/m)[0]
-  const f = fixture()
-  const cue = overlay()
-  cue.root.availableScreens = [f.screen]
   let hidden = false
-  const root = { reuseGeneration: 0, previewTransaction: "", controller: { hide() { hidden = true } } }
-  cue.root.identify(f.output, f.profile, f.displays)
-  vm.runInNewContext("(" + close + ")", { root, displayIdentify: cue.root })()
+  const root = { reuseGeneration: 0, previewTransaction: "", previewCoordinator: f.root,
+    controller: { hide() { hidden = true } } }
+  vm.runInNewContext("(" + close + ")", { root })()
   assert.equal(hidden, true)
-  assert.equal(cue.root.active, false)
-  assert.equal(cue.root.targetScreen, null)
-  assert.equal(cue.expiry.running, false)
+  assert.equal(f.overlay.targets.length, 1)
+  assert.doesNotMatch(qml, /\bDisplayIdentify\s*\{/)
+  f.expire()
+  assert.equal(f.overlay.targets.length, 0)
 })
 
 test("identification windows have no keyboard focus, pointer region, or layout commands", () => {
@@ -162,55 +265,25 @@ test("identification windows have no keyboard focus, pointer region, or layout c
   assert.match(qml, /WlrLayershell\.keyboardFocus: WlrKeyboardFocus\.None/)
   assert.match(qml, /mask: Region \{\}/)
   assert.match(qml, /exclusionMode: ExclusionMode\.Ignore/)
-  assert.match(qml, /property int duration: 2000/)
+  assert.match(qml, /interval: 4000/)
   assert.doesNotMatch(qml, /\b(?:Process|Socket|MouseArea|IpcHandler)\s*\{|forceActiveFocus|Hyprland\.dispatch/)
 })
 
-test("starting any display preview clears identification and refuses cues until the decision ends", () => {
-  const qml = fs.readFileSync(path.join(__dirname, "..", "Panel.qml"), "utf8")
-  const blocked = qml.match(/readonly property bool identifyBlockedByPreview: ([\s\S]*?)\n  onIdentifyBlockedByPreviewChanged:/)[1]
-  const changed = qml.match(/onIdentifyBlockedByPreviewChanged: ([^\n]+)/)[1]
-  const identify = qml.match(/^  function identifyOutput\([\s\S]*?^  }/m)[0]
-  for (const [key, value] of [
-    ["previewPending", true],
-    ["previewTransaction", "pending-transaction"],
-    ["daemonPreview", { transaction_id: "other-client-preview" }],
-    ["previewCoordinator", { opened: true, stage: "applying" }],
-    ["previewCoordinator", { opened: true, stage: "confirm" }]
-  ]) {
-    const f = fixture()
-    const root = {
-      backendConnected: true, editorReady: true, editorLoading: false,
-      editorRefreshQueued: false, displaysConnecting: false,
-      draftProfile: f.profile, editorDocument: { profile: f.profile, displays: f.displays },
-      previewPending: false, previewTransaction: "", daemonPreview: null, previewCoordinator: null,
-      lastError: ""
-    }
-    const cue = { active: false, requests: 0,
-      identify() { this.active = true; this.requests++; return true },
-      clear() { this.active = false }
-    }
-    const context = vm.createContext({ root, displayIdentify: cue, Model: require("../Model.js") })
-    Object.defineProperty(root, "identifyBlockedByPreview", {
-      get() { return vm.runInContext(blocked, context) }
-    })
-    root.identifyOutput = vm.runInContext("(" + identify + ")", context)
-    root.identifyOutput(f.output.key)
-    assert.equal(cue.active, true)
-    const previous = root[key]
-    root[key] = value
-    vm.runInContext(changed, context)
-    assert.equal(cue.active, false, key + " must clear a cue that was already visible")
-    root.lastError = "Keep or revert the current preview"
-    root.identifyOutput(f.output.key)
-    assert.equal(cue.requests, 1, key + " must refuse another cue")
-    assert.equal(root.lastError, "Keep or revert the current preview")
-    root[key] = previous
-    vm.runInContext(changed, context)
-    assert.equal(cue.active, false, "ending the preview must not restore an obsolete cue")
-    root.identifyOutput(f.output.key)
-    assert.equal(cue.requests, 2, "identification must work again after the preview ends")
-  }
+test("previews clear existing and pending identification and require a fresh request afterward", () => {
+  const f = serviceFixture()
+  f.root.identifyDisplays(f.output.key)
+  f.receive(f.packets.at(-1).id, f.editor)
+  f.root.updateDocument({ ...f.status, daemon: { preview: { transaction_id: "tui", reclaimable: false } } })
+  assert.equal(f.overlay.targets.length, 0)
+  assert.equal(f.root.identifyDisplays(f.output.key), false)
+  f.root.updateDocument(f.status)
+  assert.equal(f.overlay.targets.length, 0)
+  assert.equal(f.root.identifyDisplays(f.output.key), true)
+  const pending = f.packets.at(-1).id
+  f.root.updateDocument({ ...f.status, daemon: { preview: { transaction_id: "tui", reclaimable: false } } })
+  f.root.updateDocument(f.status)
+  f.receive(pending, f.editor)
+  assert.equal(f.overlay.targets.length, 0, "ending a preview must not resurrect a pre-preview request")
 })
 
 function canvasPointer(movable) {

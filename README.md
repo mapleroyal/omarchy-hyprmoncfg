@@ -4,7 +4,9 @@ An Omarchy bar panel for [hyprmoncfg](https://hyprmoncfg.dev/). Create multi-mon
 
 ![hyprmoncfg for Omarchy](preview.png)
 
-Version 2.0 brings the panel to practical feature parity with the TUI for monitor layouts, profiles, and workspace planning—and then goes further with direct pointer-driven arrangement and per-display brightness. The compact view keeps the everyday controls close; expand it for the complete spatial editor. The TUI remains available for a keyboard-first or standalone workflow.
+Version 2.4 brings a cleaner Layout / Workspaces / Profiles editor, more discoverable display and profile actions, and refreshes that preserve your edits while displays connect. The compact view keeps everyday controls close; expand it for the spatial editor. The companion TUI shares the core operations and display terminology, with native keyboard-first controls. See the [release notes](design/releases/2.4.0.md) for highlights and remaining differences.
+
+Screenshots show the actual panel with synthetic display/profile data in an isolated capture host, not a live hardware test.
 
 <details>
 <summary>See the expanded editor</summary>
@@ -16,6 +18,10 @@ Version 2.0 brings the panel to practical feature parity with the TUI for monito
 ### Saved profiles
 
 ![Expanded saved profile browser](screenshots/profiles.png)
+
+### Workspace planning
+
+![Sequential workspace planning](screenshots/workspaces.png)
 
 </details>
 
@@ -36,7 +42,16 @@ A small background service is what watches for this. It catches hotplug, lid and
 
 **Keyboard controls**
 
-- The expanded editor uses `1`/`2`/`3` to open Layout, Profiles, or Workspaces. These pages mirror the TUI shortcuts: `a` applies, `s` saves, `r` resets, and `?` shows the contextual key guide. On Profiles, **Reuse layout…** (or `u`) opens the layout-reuse form, which uses Tab, arrow keys, and Enter to move through its selectors and buttons.
+- Main pages are now `1 Layout`, `2 Workspaces`, `3 Profiles`; the 2/3 shortcuts have swapped
+- Off and mirrored displays have selectable cards; select an off display to edit its Enabled setting
+- Profile actions are available with right-click, the visible menu button, or `Shift+F10`; deletion asks for confirmation
+- Use a saved profile directly with a 30-second preview; automatic selection need not be disabled first
+- Setup status and Create profile are available in compact and expanded views; the expanded header groups Identify all, Keys, TUI, and Compact without duplicating setup text
+- Canvas and Identify use connector, model with whole-inch size, resolution/refresh, scale/position, and workspaces without display numbering or logical desktop dimensions; the inspector separates Model and Panel size
+- The inspector shows all hardware details directly; live hardware brightness remains in compact mode only
+- The companion TUI shares the display-summary conventions; standalone TUI Identify and layout reuse remain pending
+
+- The expanded panel mirrors the TUI shortcuts: `1`/`2`/`3` switch pages, `a` applies, `s` saves, `r` resets, and `?` shows the contextual key guide. On Profiles, **Reuse layout…** (or `u`) opens the layout-reuse form, which uses Tab, arrow keys, and Enter to move through its selectors and buttons.
 - On the layout, arrows move the selected display; `Shift`, `Ctrl`, and `Alt` preserve the TUI's fine movement and nearest-display snapping
 - Profile browsing and workspace settings use the same arrow, Enter, load, edit, and delete keys as the TUI
 
@@ -75,8 +90,8 @@ Neutral SDR multipliers are shown as 1, including profiles that omit them. Reset
 
 - One profile per place you work, applied automatically on hotplug, lid and resume
 - Two identical monitors are told apart, and a layout survives moving a cable to another port
-- Changes you make by hand revert on their own unless you confirm them, so a layout you cannot see cannot strand you
-- A machine that boots with every display switched off is recovered rather than left for you to fix from a TTY
+- Previewed changes revert unless you confirm within 30 seconds by default
+- Failed automatic applies retry with bounded backoff; all-displays-off startup and failed-wake rescue are not yet complete
 
 **Workspaces**
 
@@ -86,14 +101,17 @@ Neutral SDR multipliers are shown as 1, including profiles that omit them. Reset
 - Group size appears only for Sequential plans; type an exact workspace count and press `Enter`
 - In manual mode, move each numbered workspace directly between displays with the row arrows or keyboard
 - Per-monitor workspace rules, saved with the profile and applied with it
+- Persistence: First per display or All assigned with hyprmoncfg 1.19.0. Manual rules retain their individual persistence flags.
 
 ## Identify screens and reuse a layout
 
-Click a monitor in the compact or expanded layout to outline that physical screen for up to two seconds. The label helps distinguish identical monitors without moving windows or changing the layout. The cue does not take keyboard or mouse input, and dragging a monitor does not trigger it. Closing or rebuilding the panel, starting a preview, or detecting a changed display setup cancels the cue. Identify the screen again after the display list refreshes. Unavailable screens show an explanation instead.
+Click a monitor in the compact or expanded layout to identify that physical screen, or choose **Identify all**. The labels use a fresh live snapshot and help distinguish identical monitors without moving windows or changing the layout. The cues last up to four seconds, do not take keyboard or mouse input, and dragging a monitor does not trigger them. One persistent service owns identification from the canvas, inspector, and reuse form, so closing or rebuilding a bar panel does not interrupt the cue. Starting a preview, losing the backend connection, or detecting a changed display setup cancels it. Identify again after the display list refreshes. Unavailable screens show an explanation instead.
 
 Choose **Use an existing layout…** in compact view, or select a profile and choose **Reuse layout…** on Profiles, to adapt a saved layout to the monitors currently connected. Similar monitor models appear first, and any saved layout can be used. Assign each saved role to a current screen; **Identify** beside each assignment helps check which screen is which. Choosing an already assigned screen swaps the two roles. You can leave out an absent saved display.
 
 **Create draft for these monitors** uses the current hardware identities and remaps the layout, mirrors, and workspaces. Extra connected displays stay in the draft. Review any adjustments, choose a new name, then use **Preview & save → Keep & save**. The original profiles remain saved, and creating the draft alone does not apply a layout.
+
+Hotplug refreshes preserve in-progress edits and input. Stale status/editor replies cannot replace a newer topology or preview state; compositor-busy responses retain the last visible snapshot while bounded retries recover.
 
 Editor refreshes wait for an active preview to finish; choosing Discard still resets the draft from a fresh layout.
 
@@ -125,11 +143,17 @@ A fresh install takes `hyprmoncfg-bin`, the ready-made build; a machine that alr
 ## Requirements
 
 - Omarchy Quattro with third-party shell plugins
-- hyprmoncfg 1.18.3 or newer (installed from the panel when missing)
+- hyprmoncfg 1.19.0 or newer
 
 ## Staying up to date
 
-**Panel updates** opens the [marketplace listing](https://plugins.omarchy.org/plugin.html?id=crmne.hyprmoncfg), where you can review versions, the exact verified commit, and installation information before choosing an update. The panel does not fetch upstream Git commits, change its checkout, or restart the Omarchy shell. Marketplace verification covers only the recorded commit; Omarchy's standard install and update commands obtain current upstream code, which may be newer than that snapshot.
+Use Omarchy's standard plugin update command to review and install updates:
+
+```sh
+omarchy plugin update crmne.hyprmoncfg
+```
+
+The panel does not fetch upstream Git commits, change its checkout, or show a permanent update action when no update has been detected. The [marketplace listing](https://plugins.omarchy.org/plugin.html?id=crmne.hyprmoncfg) records the version and exact commit most recently verified for publication; that verification status is informational and is not an update notification.
 
 Upgrading the hyprmoncfg package is a separate matter: installing runs as root and cannot restart a user service, so the previous daemon keeps serving profiles until someone restarts it. When the running daemon is older than the installed binary, the panel offers **Restart daemon**. The hyprmoncfg TUI says the same in its status line, where the message is also the button.
 
@@ -159,10 +183,14 @@ Your saved profiles remain in `~/.config/hyprmoncfg/profiles`.
 
 ## Development
 
+The proposed shared workflow and panel direction are documented in [DESIGN.md](DESIGN.md),
+with an [interactive design study](design/monitor-manager.html). These describe
+planned improvements, not additional capabilities in the current release.
+
 The confirmation service controls previews it starts itself, and can recover a
 preview when the daemon reports that its original client disconnected. A live
 TUI keeps its own confirmation. This recovery requires the daemon's
-`preview.reclaimable` status field. The required hyprmoncfg 1.18.3 backend also keeps
+`preview.reclaimable` status field. The required hyprmoncfg 1.19.0 backend also keeps
 Omarchy's lock/wake handling aligned with the active laptop scale and position.
 
 After changes to preview handling, test position and scale changes, disabling
