@@ -183,6 +183,11 @@ Your saved profiles remain in `~/.config/hyprmoncfg/profiles`.
 
 ## Development
 
+This personal fork validates locally. GitHub Actions, automated issue assessment,
+and tag-triggered release jobs are disabled. Pushing code or tags does not publish
+a release or submit anything to the upstream marketplace. Upstream installation
+and marketplace links above describe the original project.
+
 The proposed shared workflow and panel direction are documented in [DESIGN.md](DESIGN.md),
 with an [interactive design study](design/monitor-manager.html). These describe
 planned improvements, not additional capabilities in the current release.

@@ -64,12 +64,19 @@ omarchy plugin validate .
 git diff --check
 ```
 
-## Release process
+## Local development and releases
+
+This personal fork validates locally. GitHub Actions, automated issue assessment,
+and tag-triggered releases are disabled. Do not recreate hosted workflows without
+an explicit maintainer request. Pushing this fork does not publish to the upstream
+marketplace.
+
+The following steps apply only when the maintainer explicitly requests a release
+of this fork:
 
 1. Use the next semantic version. Never move or replace a published tag.
 2. Update `manifest.json` and commit all release changes on `main`.
 3. Run the full validation commands above.
 4. Push `main`, tag the exact release commit as `v<version>`, and push the tag.
-5. Confirm the Release workflow completed and the GitHub release exists.
-6. Open a new verification issue in `omacom/omarchy-plugin-marketplace` using the verification form. Choose `Verify and publish a newer upstream commit`, keep the form headings unchanged, and target the full 40-character release commit SHA.
-7. Confirm the marketplace automation accepts the exact commit. Respond to review findings before considering the release complete.
+5. Create the release manually with `gh release create "v<version>" --repo mapleroyal/omarchy-hyprmoncfg --verify-tag --generate-notes`, then confirm it exists. Use `--prerelease` when appropriate.
+6. Marketplace verification and upstream publication require a separate explicit request; never submit this personal fork automatically.
