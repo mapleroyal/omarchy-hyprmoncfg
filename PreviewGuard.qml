@@ -413,7 +413,7 @@ Item {
       }
 
       screen: modelData
-      visible: root.opened && !remapGuard.remapping
+      visible: root.opened
       color: "transparent"
       exclusionMode: ExclusionMode.Ignore
       WlrLayershell.namespace: "hyprmoncfg-preview-guard"
@@ -432,11 +432,6 @@ Item {
       }
       onOwnsDialogChanged: guardWindow.restoreInputFocus()
       Component.onCompleted: guardWindow.restoreInputFocus()
-
-      ScreenMoveRemap {
-        id: remapGuard
-        window: guardWindow
-      }
 
       Rectangle {
         anchors.fill: parent
