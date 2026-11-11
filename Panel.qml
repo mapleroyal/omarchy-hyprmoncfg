@@ -1607,7 +1607,9 @@ Panel {
           serviceRefreshTimer.restart()
       }
     }
-    onError: function(error) { backendSocket.connected = false }
+    // Socket handles its own error/disconnect cleanup. Changing connected from
+    // its error signal re-enters that cleanup and can crash the whole shell.
+    // The existing reconnect timer retries after the native callback returns.
   }
 
   Process {

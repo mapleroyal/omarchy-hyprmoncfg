@@ -2165,7 +2165,7 @@ test("reuse controls wait for reconnect and a ready editor while retaining the a
   const editor = panel.root.editorDocument
   assert.equal(enabled(), true)
   panel.root.backendConnected = false
-  const disconnected = qml.match(/onConnectedChanged: \{([\s\S]*?)\n    }\n    onError:/)[1]
+  const disconnected = qml.match(/^    onConnectedChanged: \{([\s\S]*?)^    }/m)[1]
   panel.root.clearPreview = panelFunction("clearPreview", panel.root, { previewTimer: { stop() {} } })
   vm.runInNewContext(disconnected, { root: panel.root, connected: false })
   assert.equal(panel.root.editorDocument, editor)

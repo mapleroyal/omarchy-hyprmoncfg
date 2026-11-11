@@ -378,7 +378,9 @@ Item {
         if (wasPending) root.requestFinished(false, "hyprmoncfg disconnected during the preview. Reconnecting…")
       }
     }
-    onError: function(error) { backendSocket.connected = false }
+    // Socket handles its own error/disconnect cleanup. Changing connected from
+    // its error signal re-enters that cleanup and can crash the whole shell.
+    // The existing reconnect timer retries after the native callback returns.
   }
 
   Timer {
