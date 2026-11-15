@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 import "Model.js" as Model
 import "LayoutReuse.js" as Reuse
@@ -16,7 +17,7 @@ Item {
   property string statusMessage: ""
   property bool ownerOpen: false
   property Item popupParent: null
-  property color foreground: Color.foreground
+  property color foreground: Commons.Color.foreground
   property color dim: Qt.darker(foreground, 1.5)
   property string fontFamily: Style.font.family
   property string selectedName: ""
@@ -96,7 +97,7 @@ Item {
         text: root.selected ? root.selected.reason : "Save a profile first to reuse its layout."
         wrapMode: Text.WordWrap
         textFormat: Text.PlainText
-        color: Color.accent
+        color: Commons.Color.accent
         font.family: root.fontFamily
         font.pixelSize: Style.font.bodySmall
       }

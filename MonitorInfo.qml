@@ -1,5 +1,6 @@
 import QtQuick
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 import "Model.js" as Model
 
@@ -8,9 +9,9 @@ BorderSurface {
   property var output: null
   property var metadata: ({})
   property bool canIdentify: false
-  property color foreground: Color.foreground
+  property color foreground: Commons.Color.foreground
   property color dim: Qt.darker(foreground, 1.5)
-  property color accent: Color.accent
+  property color accent: Commons.Color.accent
   property string fontFamily: Style.font.family
   readonly property var info: Model.monitorHardwareInfo(output, metadata)
   signal identifyRequested()

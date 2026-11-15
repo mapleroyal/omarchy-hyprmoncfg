@@ -4,6 +4,7 @@ import Quickshell.Hyprland
 import Quickshell.Io
 import Quickshell.Wayland
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 import "Model.js" as Model
 import "IdentifyModel.js" as IdentifyModel
@@ -437,7 +438,7 @@ Item {
 
       Rectangle {
         anchors.fill: parent
-        color: Util.alpha(Color.background, 0.72)
+        color: Util.alpha(Commons.Color.background, 0.72)
       }
 
       // Consume every pointer press while the layout is awaiting a decision.
@@ -454,8 +455,8 @@ Item {
         width: Math.min(parent.width - Style.space(32), Style.space(460))
         height: Style.space(188)
         anchors.centerIn: parent
-        color: Color.background
-        borderSpec: Border.surfaceSpec("popups", "border", Color.accent, Math.max(1, Style.space(2)))
+        color: Commons.Color.background
+        borderSpec: Border.surfaceSpec("popups", "border", Commons.Color.accent, Math.max(1, Style.space(2)))
         radius: Style.cornerRadius
         padding: Style.space(20)
 
@@ -503,7 +504,7 @@ Item {
                   ? "Couldn’t preview this layout"
                   : (root.saveOnCommit ? "Keep and save this layout?"
                     : (root.draftApply ? "Keep this layout?" : "Keep this profile?")))
-              color: root.stage === "error" ? Color.urgent : Color.foreground
+              color: root.stage === "error" ? Commons.Color.urgent : Commons.Color.foreground
               font.family: Style.font.family
               font.pixelSize: Style.font.heading
               font.bold: true
@@ -520,7 +521,7 @@ Item {
                   : (root.actionError !== ""
                     ? root.actionError
                     : root.profileName + " · " + root.seconds + " seconds before the previous layout returns"))
-              color: root.stage === "error" || root.actionError !== "" ? Color.urgent : Color.foreground
+              color: root.stage === "error" || root.actionError !== "" ? Commons.Color.urgent : Commons.Color.foreground
               opacity: 0.68
               font.family: Style.font.family
               font.pixelSize: Style.font.body
@@ -538,7 +539,7 @@ Item {
               text: root.actionPending ? "Working…" : "Revert"
               bordered: true
               enabled: !root.actionPending
-              foreground: Color.foreground
+              foreground: Commons.Color.foreground
               fontFamily: Style.font.family
               onClicked: root.revert()
             }
@@ -548,7 +549,7 @@ Item {
               selected: true
               bordered: true
               enabled: !root.actionPending
-              foreground: Color.foreground
+              foreground: Commons.Color.foreground
               fontFamily: Style.font.family
               onClicked: root.keep()
             }
@@ -560,7 +561,7 @@ Item {
             anchors.bottom: parent.bottom
             text: "Close"
             bordered: true
-            foreground: Color.foreground
+            foreground: Commons.Color.foreground
             fontFamily: Style.font.family
             onClicked: root.clear()
           }

@@ -1,5 +1,6 @@
 import QtQuick
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 
 BorderSurface {
@@ -9,9 +10,9 @@ BorderSurface {
   property string title: ""
   property string meta: ""
   property bool active: false
-  property color foreground: Color.foreground
+  property color foreground: Commons.Color.foreground
   property color dim: Qt.darker(foreground, 1.5)
-  property color accent: Color.accent
+  property color accent: Commons.Color.accent
   property string fontFamily: Style.font.family
 
   color: Qt.rgba(foreground.r, foreground.g, foreground.b, 0.018)
